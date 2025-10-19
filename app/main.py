@@ -3,6 +3,7 @@
 import os
 import logging
 import uuid
+import json
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -125,11 +126,11 @@ async def root():
     return {
         "name": "Werewolf Benchmark Green Agent",
         "type": "A2A",
-        "discovery": "/.well-known/agent.json"
+        "discovery": "/agent.json"
     }
 
 
-@app.get("/.well-known/agent.json")
+@app.get("/agent.json")
 async def get_agent_card():
     """Return the A2A AgentCard"""
     agent_card = AgentCard(
@@ -195,10 +196,7 @@ async def handle_jsonrpc(request: Request):
 
             for part in message_parts:
                 if part.get("kind") == "text":
-                    # Simple parsing - in reality you'd want more sophisticated handling
                     text = part.get("text", "")
-                    # For now, expect JSON in text
-                    import json
                     try:
                         task_data = json.loads(text)
                         task_name = task_data.get("task")
@@ -209,10 +207,8 @@ async def handle_jsonrpc(request: Request):
             if not task_name or task_name not in TASK_HANDLERS:
                 raise ValueError(f"Unknown task: {task_name}")
 
-            # Execute the task handler
             result_data = await TASK_HANDLERS[task_name](task_params)
 
-            # Create A2A response
             task_id = str(uuid.uuid4())
             context_id = str(uuid.uuid4())
 
@@ -220,7 +216,7 @@ async def handle_jsonrpc(request: Request):
                 message_id=str(uuid.uuid4()),
                 role=Role.agent,
                 parts=[
-                    TextPart(kind="text", text=str(result_data))
+                    TextPart(kind="text", text=json.dumps(result_data))
                 ]
             )
 

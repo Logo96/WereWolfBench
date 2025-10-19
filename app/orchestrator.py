@@ -3,8 +3,9 @@
 import asyncio
 import logging
 import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Iterator
 from datetime import datetime
+import json
 
 import httpx
 from a2a.client import A2AClient
@@ -12,6 +13,8 @@ from a2a.types import (
     SendMessageRequest, MessageSendParams, Message,
     Part, TextPart, Role
 )
+
+from fastapi.encoders import jsonable_encoder
 
 from app.types.agent import (
     WerewolfAction, AgentProfile, AgentResponse,
@@ -27,7 +30,11 @@ logger = logging.getLogger(__name__)
 class GameOrchestrator:
     """Orchestrates Werewolf games between white agents via A2A"""
 
-    def __init__(self, storage: GameLogger):
+    def __init__(
+        self,
+        storage: GameLogger,
+        httpx_client: Optional[httpx.AsyncClient] = None
+    ):
         """
         Initialize the orchestrator.
 
@@ -37,7 +44,8 @@ class GameOrchestrator:
         self.storage = storage
         self.engine = GameEngine()
         self.agent_clients: Dict[str, A2AClient] = {}
-        self.httpx_client = httpx.AsyncClient()
+        self.httpx_client = httpx_client or httpx.AsyncClient()
+        self._owns_httpx_client = httpx_client is None
 
     async def start_game(
         self,
@@ -190,13 +198,14 @@ class GameOrchestrator:
         start_time = time.time()
 
         try:
-            import json
-            # Create A2A message with task data
             message = Message(
                 message_id=str(time.time()),
                 role=Role.user,
                 parts=[
-                    TextPart(kind="text", text=json.dumps(task_data))
+                    TextPart(
+                        kind="text",
+                        text=json.dumps(jsonable_encoder(task_data)),
+                    )
                 ]
             )
 
@@ -214,26 +223,31 @@ class GameOrchestrator:
                 f"Agent {agent.agent_id} responded in {response_time:.2f}ms"
             )
 
-            # Parse response
             if response.root.result:
                 result = response.root.result
-                # Extract action from response message
-                if hasattr(result, 'parts'):
-                    for part in result.parts:
-                        if hasattr(part, 'text'):
-                            try:
-                                response_data = json.loads(part.text)
-                                agent_response = AgentResponse(**response_data)
-                                action = agent_response.action
-                                action.agent_id = agent.agent_id
+                for part_text in self._iter_response_text_parts(result):
+                    try:
+                        response_data = json.loads(part_text)
+                    except json.JSONDecodeError as decode_error:
+                        logger.error(
+                            f"Failed to decode agent response JSON: {decode_error}"
+                        )
+                        continue
 
-                                self._process_action(game_id, action)
-                                return action
-                            except Exception as parse_error:
-                                logger.error(f"Failed to parse agent response: {parse_error}")
-                                return None
+                    try:
+                        agent_response = AgentResponse(**response_data)
+                    except Exception as parse_error:
+                        logger.error(f"Failed to parse agent response: {parse_error}")
+                        continue
 
-                logger.error(f"Agent {agent.agent_id} returned unexpected response format")
+                    action = agent_response.action
+                    action.agent_id = agent.agent_id
+                    self._process_action(game_id, action)
+                    return action
+
+                logger.error(
+                    f"Agent {agent.agent_id} returned unexpected response format: {result}"
+                )
                 return None
             else:
                 logger.error(f"Agent {agent.agent_id} returned error")
@@ -242,6 +256,30 @@ class GameOrchestrator:
         except Exception as e:
             logger.error(f"Failed to get action from {agent.agent_id}: {e}")
             return None
+
+    def _iter_response_text_parts(self, result: Any) -> Iterator[str]:
+        """Yield text content from response parts regardless of structure."""
+        parts = getattr(result, "parts", None)
+        if parts is None and isinstance(result, dict):
+            parts = result.get("parts", [])
+        if not parts:
+            return iter(())
+
+        def _generator():
+            for part in parts:
+                text = None
+                if hasattr(part, "text"):
+                    text = part.text
+                elif hasattr(part, "root"):
+                    root = getattr(part, "root")
+                    if hasattr(root, "text"):
+                        text = root.text
+                elif isinstance(part, dict):
+                    text = part.get("text")
+                if text:
+                    yield text
+
+        return _generator()
 
     def _process_action(self, game_id: str, action: WerewolfAction):
         """Process and validate an agent's action."""
@@ -318,5 +356,6 @@ class GameOrchestrator:
 
     async def close(self):
         """Clean up resources."""
-        await self.httpx_client.aclose()
+        if self._owns_httpx_client:
+            await self.httpx_client.aclose()
         self.agent_clients.clear()
