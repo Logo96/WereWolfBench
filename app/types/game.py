@@ -42,7 +42,7 @@ class RoundRecord(BaseModel):
     phase: GamePhase
     actions: List[Dict[str, Any]] = Field(default_factory=list)
     eliminated_agents: List[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=datetime.now(datetime.time.utc))
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class GameState(BaseModel):

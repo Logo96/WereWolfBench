@@ -6,8 +6,12 @@ import time
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
-from a2a_sdk import A2AClient
-from a2a_sdk.models import TaskRequest
+import httpx
+from a2a.client import A2AClient
+from a2a.types import (
+    SendMessageRequest, MessageSendParams, Message,
+    Part, TextPart, Role
+)
 
 from app.types.agent import (
     WerewolfAction, AgentProfile, AgentResponse,
@@ -15,7 +19,7 @@ from app.types.agent import (
 )
 from app.types.game import GameState, GamePhase, GameConfig, GameStatus
 from app.game.engine import GameEngine
-from app.storage import GameLogger
+from app.logging.storage import GameLogger
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ class GameOrchestrator:
         self.storage = storage
         self.engine = GameEngine()
         self.agent_clients: Dict[str, A2AClient] = {}
+        self.httpx_client = httpx.AsyncClient()
 
     async def start_game(
         self,
@@ -63,7 +68,10 @@ class GameOrchestrator:
                 role=role
             )
             agents.append(agent)
-            self.agent_clients[agent_id] = A2AClient(base_url=url)
+            self.agent_clients[agent_id] = A2AClient(
+                httpx_client=self.httpx_client,
+                url=url
+            )
 
         self.storage.log_game_created(game_state, agent_urls)
         self.storage.save_agents(game_state.game_id, agents)
@@ -182,27 +190,53 @@ class GameOrchestrator:
         start_time = time.time()
 
         try:
-            task_request = TaskRequest(
-                task="werewolf_action",
-                parameters=task_data
+            import json
+            # Create A2A message with task data
+            message = Message(
+                message_id=str(time.time()),
+                role=Role.user,
+                parts=[
+                    TextPart(kind="text", text=json.dumps(task_data))
+                ]
             )
 
-            response = await client.execute_task(task_request)
+            request = SendMessageRequest(
+                id=str(time.time()),
+                jsonrpc="2.0",
+                method="message/send",
+                params=MessageSendParams(message=message)
+            )
+
+            response = await client.send_message(request)
             response_time = (time.time() - start_time) * 1000
 
             logger.debug(
                 f"Agent {agent.agent_id} responded in {response_time:.2f}ms"
             )
 
-            if response.success and response.data:
-                agent_response = AgentResponse(**response.data)
-                action = agent_response.action
-                action.agent_id = agent.agent_id
+            # Parse response
+            if response.root.result:
+                result = response.root.result
+                # Extract action from response message
+                if hasattr(result, 'parts'):
+                    for part in result.parts:
+                        if hasattr(part, 'text'):
+                            try:
+                                response_data = json.loads(part.text)
+                                agent_response = AgentResponse(**response_data)
+                                action = agent_response.action
+                                action.agent_id = agent.agent_id
 
-                self._process_action(game_id, action)
-                return action
+                                self._process_action(game_id, action)
+                                return action
+                            except Exception as parse_error:
+                                logger.error(f"Failed to parse agent response: {parse_error}")
+                                return None
+
+                logger.error(f"Agent {agent.agent_id} returned unexpected response format")
+                return None
             else:
-                logger.error(f"Agent {agent.agent_id} returned error: {response.error}")
+                logger.error(f"Agent {agent.agent_id} returned error")
                 return None
 
         except Exception as e:
@@ -278,14 +312,11 @@ class GameOrchestrator:
 
         for agent_id in list(self.agent_clients.keys()):
             if agent_id in game_state.agent_ids:
-                client = self.agent_clients.pop(agent_id, None)
-                if client:
-                    await client.close()
+                self.agent_clients.pop(agent_id, None)
 
         logger.info(f"Game {game_id} finalized and cleaned up")
 
     async def close(self):
         """Clean up resources."""
-        for client in self.agent_clients.values():
-            await client.close()
+        await self.httpx_client.aclose()
         self.agent_clients.clear()
