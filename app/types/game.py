@@ -76,6 +76,12 @@ class GameState(BaseModel):
     # Hunter state
     hunter_eliminated: Optional[str] = Field(None, description="Hunter who was eliminated and can shoot")
 
+    # Seer investigation results
+    seer_investigations: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Seer investigation results (agent_id -> {target_id: str, is_werewolf: bool, round: int})"
+    )
+
     round_history: List[RoundRecord] = Field(default_factory=list)
 
     config: GameConfig = Field(default_factory=GameConfig)

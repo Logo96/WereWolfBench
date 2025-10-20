@@ -86,7 +86,7 @@ class GameLogger:
             self.game_actions[game_id] = []
         self.game_actions[game_id].append(action)
 
-        self._write_game_event(game_id, {
+        event_data = {
             "event": "action",
             "timestamp": action.timestamp.isoformat(),
             "game_id": game_id,
@@ -95,7 +95,21 @@ class GameLogger:
             "target": action.target_agent_id,
             "confidence": action.confidence,
             "reasoning": action.reasoning
-        })
+        }
+        
+        # Add investigation result for seer actions
+        if action.action_type.value == "investigate" and action.target_agent_id:
+            # Get the game state to determine if target is werewolf
+            game_state = self.get_game(game_id)
+            if game_state:
+                target_role = game_state.role_assignments.get(action.target_agent_id)
+                is_werewolf = target_role == "werewolf"
+                event_data["investigation_result"] = {
+                    "target_id": action.target_agent_id,
+                    "is_werewolf": is_werewolf
+                }
+        
+        self._write_game_event(game_id, event_data)
 
     def get_game_actions(self, game_id: str) -> List[WerewolfAction]:
         """Get all actions in a game."""

@@ -156,6 +156,24 @@ class GameEngine:
                 eliminated.append(poisoned_agent)
                 logger.info(f"Agent {poisoned_agent} poisoned by witch")
 
+        elif game_state.phase == GamePhase.NIGHT_SEER:
+            seer_actions = [
+                a for a in phase_actions
+                if a.action_type == ActionType.INVESTIGATE
+            ]
+            self.state_manager.process_seer_investigation(game_state, seer_actions)
+            if seer_actions:
+                logger.info(f"Seer investigations processed: {len(seer_actions)} investigations")
+
+        elif game_state.phase == GamePhase.NIGHT_DOCTOR:
+            doctor_actions = [
+                a for a in phase_actions
+                if a.action_type == ActionType.PROTECT
+            ]
+            protected_agent = self._get_doctor_protection(doctor_actions)
+            if protected_agent:
+                logger.info(f"Agent {protected_agent} protected by doctor")
+
         # Process hunter elimination (happens after any elimination)
         if eliminated and game_state.hunter_eliminated:
             hunter_actions = [

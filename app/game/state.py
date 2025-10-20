@@ -183,6 +183,34 @@ class StateManager:
         return None
 
     @staticmethod
+    def process_seer_investigation(
+        game_state: GameState,
+        seer_actions: List[WerewolfAction]
+    ) -> None:
+        """
+        Process seer investigation actions and store results.
+        Updates game_state.seer_investigations with investigation results.
+        """
+        for action in seer_actions:
+            if (action.action_type == ActionType.INVESTIGATE and 
+                action.target_agent_id and
+                action.target_agent_id in game_state.alive_agent_ids):
+                
+                # Determine if the target is a werewolf
+                target_role = game_state.role_assignments.get(action.target_agent_id)
+                is_werewolf = target_role == AgentRole.WEREWOLF.value
+                
+                # Store investigation result
+                investigation_key = f"{action.agent_id}_{action.target_agent_id}_{game_state.round_number}"
+                game_state.seer_investigations[investigation_key] = {
+                    "seer_id": action.agent_id,
+                    "target_id": action.target_agent_id,
+                    "is_werewolf": is_werewolf,
+                    "round": game_state.round_number,
+                    "timestamp": action.timestamp
+                }
+
+    @staticmethod
     def advance_round(game_state: GameState) -> None:
         """Advance to the next round"""
         # Clear current votes
@@ -247,6 +275,18 @@ class StateManager:
             visible_state["killed_this_night"] = game_state.killed_this_night
             visible_state["heal_available"] = not game_state.witch_heal_used
             visible_state["poison_available"] = not game_state.witch_poison_used
+
+        elif agent_role == AgentRole.SEER.value:
+            # Seer knows their investigation results
+            seer_investigations = []
+            for investigation in game_state.seer_investigations.values():
+                if investigation["seer_id"] == agent_id:
+                    seer_investigations.append({
+                        "target_id": investigation["target_id"],
+                        "is_werewolf": investigation["is_werewolf"],
+                        "round": investigation["round"]
+                    })
+            visible_state["investigation_results"] = seer_investigations
 
         # During voting, show current votes
         if game_state.phase == GamePhase.DAY_VOTING:

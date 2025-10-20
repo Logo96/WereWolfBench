@@ -59,7 +59,7 @@ def test_start_game_transitions_state(game_state_factory):
     engine = GameEngine()
     started = engine.start_game(state)
     assert started.status == GameStatus.IN_PROGRESS
-    assert started.phase == GamePhase.DAY_DISCUSSION
+    assert started.phase == GamePhase.NIGHT_WEREWOLF
     assert started.round_number == 1
     assert isinstance(started.started_at, datetime)
 
@@ -169,3 +169,79 @@ def test_advance_phase_triggers_game_end_on_last_werewolf(game_state_factory):
     assert updated.phase == GamePhase.GAME_OVER
     assert updated.winner == "villagers"
     assert updated.completed_at is not None
+
+
+def test_advance_phase_seer_investigation_stores_results(game_state_factory):
+    state = game_state_factory(phase=GamePhase.NIGHT_SEER)
+    state.role_assignments = {
+        "agent_0": "werewolf",
+        "agent_1": "werewolf", 
+        "agent_2": "seer",
+        "agent_3": "doctor",
+        "agent_4": "villager",
+    }
+
+    actions = [
+        _make_action("agent_2", ActionType.INVESTIGATE, "agent_0"),  # Investigate werewolf
+        _make_action("agent_2", ActionType.INVESTIGATE, "agent_4"),  # Investigate villager
+    ]
+
+    engine = GameEngine()
+    updated, eliminated = engine.advance_phase(state, actions)
+
+    # Check that investigation results were stored
+    assert len(updated.seer_investigations) == 2
+    
+    # Check first investigation (werewolf)
+    werewolf_investigation = None
+    villager_investigation = None
+    for investigation in updated.seer_investigations.values():
+        if investigation["target_id"] == "agent_0":
+            werewolf_investigation = investigation
+        elif investigation["target_id"] == "agent_4":
+            villager_investigation = investigation
+    
+    assert werewolf_investigation is not None
+    assert werewolf_investigation["is_werewolf"] is True
+    assert werewolf_investigation["seer_id"] == "agent_2"
+    
+    assert villager_investigation is not None
+    assert villager_investigation["is_werewolf"] is False
+    assert villager_investigation["seer_id"] == "agent_2"
+
+
+def test_seer_visible_state_includes_investigation_results(game_state_factory):
+    state = game_state_factory()
+    state.role_assignments = {"agent_0": "seer", "agent_1": "werewolf", "agent_2": "villager"}
+    
+    # Add some investigation results
+    state.seer_investigations = {
+        "investigation_1": {
+            "seer_id": "agent_0",
+            "target_id": "agent_1", 
+            "is_werewolf": True,
+            "round": 1,
+            "timestamp": datetime.utcnow()
+        },
+        "investigation_2": {
+            "seer_id": "agent_0",
+            "target_id": "agent_2",
+            "is_werewolf": False, 
+            "round": 2,
+            "timestamp": datetime.utcnow()
+        }
+    }
+
+    from app.game.state import StateManager
+    visible_state = StateManager.get_visible_state(state, "agent_0")
+    
+    assert "investigation_results" in visible_state
+    investigations = visible_state["investigation_results"]
+    assert len(investigations) == 2
+    
+    # Check that results are properly formatted
+    werewolf_result = next(r for r in investigations if r["target_id"] == "agent_1")
+    villager_result = next(r for r in investigations if r["target_id"] == "agent_2")
+    
+    assert werewolf_result["is_werewolf"] is True
+    assert villager_result["is_werewolf"] is False
