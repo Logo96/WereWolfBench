@@ -32,6 +32,7 @@ class RulesValidator:
             GamePhase.DAY_DISCUSSION: RulesValidator._validate_discussion,
             GamePhase.DAY_VOTING: RulesValidator._validate_voting,
             GamePhase.NIGHT_WEREWOLF: RulesValidator._validate_werewolf_night,
+            GamePhase.NIGHT_WITCH: RulesValidator._validate_witch_night,
             GamePhase.NIGHT_SEER: RulesValidator._validate_seer_night,
             GamePhase.NIGHT_DOCTOR: RulesValidator._validate_doctor_night,
         }
@@ -152,6 +153,67 @@ class RulesValidator:
             if action.target_agent_id not in game_state.alive_agent_ids:
                 return False, "Can only protect living agents"
 
+        return True, None
+
+    @staticmethod
+    def _validate_witch_night(
+        action: WerewolfAction,
+        game_state: GameState,
+        agent_role: AgentRole
+    ) -> tuple[bool, Optional[str]]:
+        """Validate witch night actions"""
+        if agent_role != AgentRole.WITCH:
+            if action.action_type != ActionType.PASS:
+                return False, "Non-witches must pass during witch phase"
+            return True, None
+
+        if action.action_type not in [ActionType.HEAL, ActionType.POISON, ActionType.PASS]:
+            return False, "Witch can only heal, poison, or pass"
+
+        if action.action_type == ActionType.HEAL:
+            if not action.target_agent_id:
+                return False, "Heal action must specify a target"
+            
+            if game_state.witch_heal_used:
+                return False, "Witch has already used heal potion"
+                
+            if action.target_agent_id != game_state.killed_this_night:
+                return False, "Can only heal the agent killed this night"
+
+        elif action.action_type == ActionType.POISON:
+            if not action.target_agent_id:
+                return False, "Poison action must specify a target"
+                
+            if game_state.witch_poison_used:
+                return False, "Witch has already used poison potion"
+                
+            if action.target_agent_id not in game_state.alive_agent_ids:
+                return False, "Can only poison living agents"
+
+        return True, None
+
+    @staticmethod
+    def _validate_hunter_shoot(
+        action: WerewolfAction,
+        game_state: GameState,
+        agent_role: AgentRole
+    ) -> tuple[bool, Optional[str]]:
+        """Validate hunter shoot action when eliminated"""
+        if agent_role != AgentRole.HUNTER:
+            return False, "Only hunters can shoot"
+            
+        if action.action_type != ActionType.SHOOT:
+            return False, "Hunter can only shoot when eliminated"
+            
+        if not action.target_agent_id:
+            return False, "Shoot action must specify a target"
+            
+        if action.target_agent_id not in game_state.alive_agent_ids:
+            return False, "Can only shoot living agents"
+            
+        if action.agent_id != game_state.hunter_eliminated:
+            return False, "Only the eliminated hunter can shoot"
+            
         return True, None
 
     @staticmethod

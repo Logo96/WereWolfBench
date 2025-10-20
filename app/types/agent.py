@@ -13,6 +13,7 @@ class AgentRole(str, Enum):
     SEER = "seer"
     DOCTOR = "doctor"
     HUNTER = "hunter"
+    WITCH = "witch"
 
 
 class ActionType(str, Enum):
@@ -22,6 +23,8 @@ class ActionType(str, Enum):
     INVESTIGATE = "investigate"
     PROTECT = "protect"
     SHOOT = "shoot"
+    HEAL = "heal"
+    POISON = "poison"
     DISCUSS = "discuss"
     PASS = "pass"
 

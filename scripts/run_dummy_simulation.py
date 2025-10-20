@@ -95,6 +95,8 @@ async def run_simulation(args: argparse.Namespace) -> None:
             "num_werewolves": args.num_werewolves,
             "has_seer": not args.no_seer,
             "has_doctor": not args.no_doctor,
+            "has_hunter": args.has_hunter,
+            "has_witch": args.has_witch,
             "max_rounds": args.max_rounds,
         }
 
@@ -152,6 +154,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-werewolves", type=int, default=2, help="Werewolves in the game")
     parser.add_argument("--no-seer", action="store_true", help="Disable the seer role")
     parser.add_argument("--no-doctor", action="store_true", help="Disable the doctor role")
+    parser.add_argument("--has-hunter", action="store_true", help="Enable the hunter role")
+    parser.add_argument("--has-witch", action="store_true", help="Enable the witch role")
     parser.add_argument("--max-rounds", type=int, default=20, help="Maximum rounds before forced end")
     parser.add_argument("--host", default="127.0.0.1", help="Host for dummy agents")
     parser.add_argument("--port-start", type=int, default=9500, help="Starting port for agents")

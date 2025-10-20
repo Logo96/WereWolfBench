@@ -21,14 +21,14 @@ def _make_action(agent_id: str, action_type: ActionType, target: str | None = No
 
 def test_create_game_initializes_state(monkeypatch):
     engine = GameEngine()
-    agent_urls = [f"http://agent{i}.test" for i in range(5)]
+    agent_urls = [f"http://agent{i}.test" for i in range(8)]
 
     state = engine.create_game(agent_urls)
     assert state.game_id
     assert state.status == GameStatus.WAITING
     assert state.phase == GamePhase.SETUP
     assert state.round_number == 0
-    assert state.agent_ids == [f"agent_{i}" for i in range(5)]
+    assert state.agent_ids == [f"agent_{i}" for i in range(8)]
     assert state.alive_agent_ids == state.agent_ids
     assert len(state.role_assignments) == len(agent_urls)
 

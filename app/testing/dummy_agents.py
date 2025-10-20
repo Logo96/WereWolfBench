@@ -62,6 +62,25 @@ def _build_action_payload(
                 action_type = ActionType.PASS.value
         else:
             action_type = ActionType.PASS.value
+    elif phase == "night_witch":
+        if role == AgentRole.WITCH.value:
+            # Check if heal is available and someone was killed
+            killed_this_night = visible_state.get("killed_this_night")
+            heal_available = visible_state.get("heal_available", False)
+            poison_available = visible_state.get("poison_available", False)
+            
+            if heal_available and killed_this_night:
+                action_type = ActionType.HEAL.value
+                target = killed_this_night
+            elif poison_available:
+                action_type = ActionType.POISON.value
+                target = _first_alive(alive_agents, skip=[agent_id])
+                if not target:
+                    action_type = ActionType.PASS.value
+            else:
+                action_type = ActionType.PASS.value
+        else:
+            action_type = ActionType.PASS.value
     elif phase == "night_seer":
         if role == AgentRole.SEER.value:
             target = _first_alive(alive_agents, skip=[agent_id])
@@ -74,6 +93,12 @@ def _build_action_payload(
             action_type = ActionType.PROTECT.value
         else:
             action_type = ActionType.PASS.value
+    
+    # Hunter elimination check (happens after any elimination)
+    elif role == AgentRole.HUNTER.value and agent_id not in alive_agents:
+        # Hunter was eliminated, can shoot
+        target = _first_alive(alive_agents)
+        action_type = ActionType.SHOOT.value if target else ActionType.PASS.value
 
     return {
         "action": {

@@ -63,11 +63,13 @@ async def test_orchestrator_runs_full_round_and_logs(tmp_path, monkeypatch):
         fake_request_agent_action,
     )
 
-    agent_urls = [f"http://agent{i}.test" for i in range(5)]
+    agent_urls = [f"http://agent{i}.test" for i in range(8)]
     config = GameConfig(
-        num_werewolves=1,
-        has_seer=False,
-        has_doctor=False,
+        num_werewolves=2,
+        has_seer=True,
+        has_doctor=True,
+        has_hunter=True,
+        has_witch=True,
         max_rounds=5,
     )
 

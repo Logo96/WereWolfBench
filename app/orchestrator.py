@@ -85,8 +85,9 @@ class GameOrchestrator:
         self.storage.save_agents(game_state.game_id, agents)
 
         game_state = self.engine.start_game(game_state)
-        self.storage.save_game(game_state)
+        # Log game started BEFORE first game update
         self.storage.log_game_started(game_state.game_id)
+        self.storage.save_game(game_state, force_log=True)
 
         asyncio.create_task(self._run_game_loop(game_state.game_id))
 
@@ -120,6 +121,8 @@ class GameOrchestrator:
                     self.storage.save_game(game_state)
 
                     if game_state.status == GameStatus.COMPLETED:
+                        # Log final game state with winner
+                        self.storage.save_game(game_state, force_log=True)
                         await self._finalize_game(game_id)
                         break
 
@@ -315,6 +318,9 @@ class GameOrchestrator:
             elif game_state.phase == GamePhase.NIGHT_WEREWOLF:
                 if role == AgentRole.WEREWOLF.value:
                     active.append(agent)
+            elif game_state.phase == GamePhase.NIGHT_WITCH:
+                if role == AgentRole.WITCH.value:
+                    active.append(agent)
             elif game_state.phase == GamePhase.NIGHT_SEER:
                 if role == AgentRole.SEER.value:
                     active.append(agent)
@@ -344,6 +350,8 @@ class GameOrchestrator:
             f"Rounds: {game_state.round_number}"
         )
 
+        # Log comprehensive game completion
+        self.storage.log_game_completed(game_state)
         self.storage.log_game_ended(game_id, game_state.winner, game_state.round_number)
 
         # TODO: Calculate and store evaluation scores

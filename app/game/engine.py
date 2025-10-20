@@ -26,8 +26,8 @@ class GameEngine:
         config: Optional[GameConfig] = None
     ) -> GameState:
         """Create a new game with the specified agents."""
-        if len(agent_urls) < 4:
-            raise ValueError("Minimum 4 agents required to play Werewolf")
+        if len(agent_urls) < 8:
+            raise ValueError("Minimum 8 agents required to play Werewolf with all roles (2 werewolves, 1 seer, 1 doctor, 1 hunter, 1 witch, 2 villagers)")
 
         game_id = str(uuid.uuid4())
         agent_ids = [f"agent_{i}" for i in range(len(agent_urls))]
@@ -55,7 +55,7 @@ class GameEngine:
             raise ValueError(f"Cannot start game in status {game_state.status}")
 
         game_state.status = GameStatus.IN_PROGRESS
-        game_state.phase = GamePhase.DAY_DISCUSSION
+        game_state.phase = GamePhase.NIGHT_WEREWOLF
         game_state.round_number = 1
         game_state.started_at = datetime.utcnow()
 
@@ -132,12 +132,41 @@ class GameEngine:
                 game_state, werewolf_actions
             )
 
-            # Check if target was protected
-            doctor_protection = self._get_doctor_protection(phase_actions)
-            if target_id and target_id != doctor_protection:
-                self.state_manager.eliminate_agent(game_state, target_id)
-                eliminated.append(target_id)
-                logger.info(f"Agent {target_id} killed by werewolves")
+            # Store who was killed for witch to see
+            if target_id:
+                game_state.killed_this_night = target_id
+                logger.info(f"Agent {target_id} targeted by werewolves")
+
+        elif game_state.phase == GamePhase.NIGHT_WITCH:
+            witch_actions = [
+                a for a in phase_actions
+                if a.action_type in [ActionType.HEAL, ActionType.POISON]
+            ]
+            healed_agent, poisoned_agent = self.state_manager.process_witch_actions(
+                game_state, witch_actions
+            )
+            
+            if healed_agent:
+                logger.info(f"Agent {healed_agent} healed by witch")
+                # Remove from killed_this_night since they were healed
+                game_state.killed_this_night = None
+                
+            if poisoned_agent:
+                self.state_manager.eliminate_agent(game_state, poisoned_agent)
+                eliminated.append(poisoned_agent)
+                logger.info(f"Agent {poisoned_agent} poisoned by witch")
+
+        # Process hunter elimination (happens after any elimination)
+        if eliminated and game_state.hunter_eliminated:
+            hunter_actions = [
+                a for a in phase_actions
+                if a.action_type == ActionType.SHOOT and a.agent_id == game_state.hunter_eliminated
+            ]
+            shot_agent = self.state_manager.process_hunter_shoot(game_state, hunter_actions)
+            if shot_agent:
+                self.state_manager.eliminate_agent(game_state, shot_agent)
+                eliminated.append(shot_agent)
+                logger.info(f"Agent {shot_agent} shot by eliminated hunter {game_state.hunter_eliminated}")
 
         # Record round history
         round_record = self.state_manager.create_round_record(
@@ -183,6 +212,13 @@ class GameEngine:
             return {
                 agent_id for agent_id in game_state.alive_agent_ids
                 if game_state.role_assignments.get(agent_id) == AgentRole.WEREWOLF.value
+            }
+
+        elif game_state.phase == GamePhase.NIGHT_WITCH:
+            # Only witch acts (if alive)
+            return {
+                agent_id for agent_id in game_state.alive_agent_ids
+                if game_state.role_assignments.get(agent_id) == AgentRole.WITCH.value
             }
 
         elif game_state.phase == GamePhase.NIGHT_SEER:

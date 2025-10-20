@@ -23,22 +23,35 @@ class GameLogger:
         self.active_games: Dict[str, GameState] = {}
         self.game_agents: Dict[str, List[AgentProfile]] = {}
         self.game_actions: Dict[str, List[WerewolfAction]] = {}
+        self.last_logged_states: Dict[str, Dict[str, Any]] = {}
 
-    def save_game(self, game_state: GameState) -> None:
+    def save_game(self, game_state: GameState, force_log: bool = False) -> None:
         """Save or update game state."""
         self.active_games[game_state.game_id] = game_state
 
-        self._write_game_event(game_state.game_id, {
-            "event": "game_update",
-            "timestamp": datetime.utcnow().isoformat(),
-            "game_id": game_state.game_id,
-            "status": game_state.status.value,
-            "phase": game_state.phase.value,
-            "round": game_state.round_number,
-            "alive": game_state.alive_agent_ids,
-            "eliminated": game_state.eliminated_agent_ids,
-            "winner": game_state.winner
-        })
+        # Check if state has changed or if forced to log
+        if force_log or self._has_state_changed(game_state):
+            self._write_game_event(game_state.game_id, {
+                "event": "game_update",
+                "timestamp": datetime.utcnow().isoformat(),
+                "game_id": game_state.game_id,
+                "status": game_state.status.value,
+                "phase": game_state.phase.value,
+                "round": game_state.round_number,
+                "alive": game_state.alive_agent_ids,
+                "eliminated": game_state.eliminated_agent_ids,
+                "winner": game_state.winner
+            })
+            
+            # Update the last logged state
+            self.last_logged_states[game_state.game_id] = {
+                "status": game_state.status.value,
+                "phase": game_state.phase.value,
+                "round": game_state.round_number,
+                "alive": game_state.alive_agent_ids.copy(),
+                "eliminated": game_state.eliminated_agent_ids.copy(),
+                "winner": game_state.winner
+            }
 
     def get_game(self, game_id: str) -> Optional[GameState]:
         """Get game state by ID from memory."""
@@ -125,6 +138,22 @@ class GameLogger:
             "total_rounds": rounds
         })
 
+    def log_game_completed(self, game_state: GameState) -> None:
+        """Log game completion with final state."""
+        self._write_game_event(game_state.game_id, {
+            "event": "game_completed",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_state.game_id,
+            "status": game_state.status.value,
+            "phase": game_state.phase.value,
+            "round": game_state.round_number,
+            "alive": game_state.alive_agent_ids,
+            "eliminated": game_state.eliminated_agent_ids,
+            "winner": game_state.winner,
+            "total_rounds": game_state.round_number,
+            "role_assignments": game_state.role_assignments
+        })
+
     def list_games(self) -> List[str]:
         """List all game IDs."""
         return list(self.active_games.keys())
@@ -145,6 +174,31 @@ class GameLogger:
             "alive_agents": len(game_state.alive_agent_ids),
             "eliminated_agents": len(game_state.eliminated_agent_ids)
         }
+
+    def _has_state_changed(self, game_state: GameState) -> bool:
+        """Check if the game state has changed since last logged."""
+        game_id = game_state.game_id
+        last_state = self.last_logged_states.get(game_id)
+        
+        if not last_state:
+            return True  # First time logging this game
+        
+        # Check if any key fields have changed
+        current_state = {
+            "status": game_state.status.value,
+            "phase": game_state.phase.value,
+            "round": game_state.round_number,
+            "alive": game_state.alive_agent_ids,
+            "eliminated": game_state.eliminated_agent_ids,
+            "winner": game_state.winner
+        }
+        
+        # Compare with last logged state
+        for key, current_value in current_state.items():
+            if last_state.get(key) != current_value:
+                return True
+                
+        return False
 
     def _write_game_event(self, game_id: str, event: Dict[str, Any]) -> None:
         """Write an event to the game's log file."""

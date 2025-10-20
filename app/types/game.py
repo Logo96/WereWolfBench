@@ -12,6 +12,7 @@ class GamePhase(str, Enum):
     DAY_DISCUSSION = "day_discussion"
     DAY_VOTING = "day_voting"
     NIGHT_WEREWOLF = "night_werewolf"
+    NIGHT_WITCH = "night_witch"
     NIGHT_SEER = "night_seer"
     NIGHT_DOCTOR = "night_doctor"
     GAME_OVER = "game_over"
@@ -31,6 +32,7 @@ class GameConfig(BaseModel):
     has_seer: bool = Field(True, description="Whether to include a seer")
     has_doctor: bool = Field(True, description="Whether to include a doctor")
     has_hunter: bool = Field(False, description="Whether to include a hunter")
+    has_witch: bool = Field(False, description="Whether to include a witch")
     discussion_time_limit: int = Field(300, description="Time limit for discussion in seconds")
     voting_time_limit: int = Field(60, description="Time limit for voting in seconds")
     max_rounds: int = Field(20, description="Maximum number of rounds before game ends")
@@ -65,6 +67,14 @@ class GameState(BaseModel):
         default_factory=dict,
         description="Current voting state (voter_id -> target_id)"
     )
+
+    # Witch state
+    witch_heal_used: bool = Field(False, description="Whether witch has used heal potion")
+    witch_poison_used: bool = Field(False, description="Whether witch has used poison potion")
+    killed_this_night: Optional[str] = Field(None, description="Agent killed by werewolves this night")
+
+    # Hunter state
+    hunter_eliminated: Optional[str] = Field(None, description="Hunter who was eliminated and can shoot")
 
     round_history: List[RoundRecord] = Field(default_factory=list)
 

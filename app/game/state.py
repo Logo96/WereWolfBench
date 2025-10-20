@@ -26,6 +26,8 @@ class StateManager:
             roles.append(AgentRole.DOCTOR.value)
         if config.get("has_hunter", False):
             roles.append(AgentRole.HUNTER.value)
+        if config.get("has_witch", False):
+            roles.append(AgentRole.WITCH.value)
 
         # Fill remaining with villagers
         while len(roles) < len(agent_ids):
@@ -39,18 +41,24 @@ class StateManager:
     def get_next_phase(current_phase: GamePhase, config: Dict) -> GamePhase:
         """Determine the next game phase"""
         phase_order = [
-            GamePhase.DAY_DISCUSSION,
-            GamePhase.DAY_VOTING,
             GamePhase.NIGHT_WEREWOLF,
         ]
 
+        if config.get("has_witch", False):
+            phase_order.append(GamePhase.NIGHT_WITCH)
         if config.get("has_seer", True):
             phase_order.append(GamePhase.NIGHT_SEER)
         if config.get("has_doctor", True):
             phase_order.append(GamePhase.NIGHT_DOCTOR)
+        
+        # Day phases come after all night phases
+        phase_order.extend([
+            GamePhase.DAY_DISCUSSION,
+            GamePhase.DAY_VOTING,
+        ])
 
         if current_phase == GamePhase.SETUP:
-            return GamePhase.DAY_DISCUSSION
+            return GamePhase.NIGHT_WEREWOLF
 
         try:
             current_index = phase_order.index(current_phase)
@@ -125,6 +133,54 @@ class StateManager:
         if agent_id in game_state.alive_agent_ids:
             game_state.alive_agent_ids.remove(agent_id)
             game_state.eliminated_agent_ids.append(agent_id)
+            
+            # Check if eliminated agent is a hunter
+            if game_state.role_assignments.get(agent_id) == AgentRole.HUNTER.value:
+                game_state.hunter_eliminated = agent_id
+
+    @staticmethod
+    def process_witch_actions(
+        game_state: GameState,
+        witch_actions: List[WerewolfAction]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Process witch actions and return (healed_agent, poisoned_agent).
+        Returns (None, None) if no valid actions.
+        """
+        healed_agent = None
+        poisoned_agent = None
+        
+        for action in witch_actions:
+            if action.action_type == ActionType.HEAL and not game_state.witch_heal_used:
+                if action.target_agent_id == game_state.killed_this_night:
+                    healed_agent = action.target_agent_id
+                    game_state.witch_heal_used = True
+            elif action.action_type == ActionType.POISON and not game_state.witch_poison_used:
+                if action.target_agent_id in game_state.alive_agent_ids:
+                    poisoned_agent = action.target_agent_id
+                    game_state.witch_poison_used = True
+                    
+        return healed_agent, poisoned_agent
+
+    @staticmethod
+    def process_hunter_shoot(
+        game_state: GameState,
+        hunter_actions: List[WerewolfAction]
+    ) -> Optional[str]:
+        """
+        Process hunter shoot action when eliminated.
+        Returns the shot agent ID or None.
+        """
+        if not game_state.hunter_eliminated:
+            return None
+            
+        for action in hunter_actions:
+            if (action.agent_id == game_state.hunter_eliminated and 
+                action.action_type == ActionType.SHOOT and
+                action.target_agent_id in game_state.alive_agent_ids):
+                return action.target_agent_id
+                
+        return None
 
     @staticmethod
     def advance_round(game_state: GameState) -> None:
@@ -141,6 +197,9 @@ class StateManager:
         # Increment round number if returning to day
         if game_state.phase == GamePhase.DAY_DISCUSSION:
             game_state.round_number += 1
+            # Clear night-specific state
+            game_state.killed_this_night = None
+            game_state.hunter_eliminated = None
 
     @staticmethod
     def create_round_record(
@@ -182,6 +241,12 @@ class StateManager:
                 if role == AgentRole.WEREWOLF.value
             ]
             visible_state["werewolf_teammates"] = werewolf_ids
+
+        elif agent_role == AgentRole.WITCH.value:
+            # Witch knows who was killed this night and potion status
+            visible_state["killed_this_night"] = game_state.killed_this_night
+            visible_state["heal_available"] = not game_state.witch_heal_used
+            visible_state["poison_available"] = not game_state.witch_poison_used
 
         # During voting, show current votes
         if game_state.phase == GamePhase.DAY_VOTING:

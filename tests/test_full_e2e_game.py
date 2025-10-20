@@ -52,10 +52,10 @@ pytestmark = pytest.mark.skipif(
 async def test_full_http_game_flow(tmp_path):
     """Spin up dummy agents and ensure a full game completes with logs."""
     host = "127.0.0.1"
-    ports = _reserve_ports(host, 6)
+    ports = _reserve_ports(host, 8)
     servers = [
         DummyAgentServer(agent_name=f"agent_{idx}", host=host, port=ports[idx])
-        for idx in range(6)
+        for idx in range(8)
     ]
 
     for server in servers:
@@ -66,7 +66,13 @@ async def test_full_http_game_flow(tmp_path):
 
     try:
         agent_urls = [server.url for server in servers]
-        config = GameConfig(num_werewolves=2, has_seer=True, has_doctor=True)
+        config = GameConfig(
+            num_werewolves=2, 
+            has_seer=True, 
+            has_doctor=True,
+            has_hunter=True,
+            has_witch=True
+        )
         game_id = await orchestrator.start_game(agent_urls, config)
 
         async def wait_for_completion():
@@ -76,7 +82,7 @@ async def test_full_http_game_flow(tmp_path):
                     return game_state
                 await asyncio.sleep(0.1)
 
-        final_state = await asyncio.wait_for(wait_for_completion(), timeout=15.0)
+        final_state = await asyncio.wait_for(wait_for_completion(), timeout=30.0)
 
         assert final_state.phase == GamePhase.GAME_OVER
         assert final_state.winner in {"villagers", "werewolves"}
