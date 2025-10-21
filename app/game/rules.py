@@ -1,7 +1,7 @@
 """Rules validation for Werewolf game actions"""
 
 from typing import List, Optional, Set
-from app.types.agent import WerewolfAction, ActionType, AgentRole
+from app.types.agent import WerewolfAction, ActionType, AgentRole, DiscussionActionType
 from app.types.game import GameState, GamePhase
 
 
@@ -52,6 +52,56 @@ class RulesValidator:
         """Validate actions during day discussion phase"""
         if action.action_type not in [ActionType.DISCUSS, ActionType.PASS]:
             return False, "Only discussion or pass allowed during discussion phase"
+        
+        # If it's a discuss action, validate the discussion sub-action
+        if action.action_type == ActionType.DISCUSS:
+            return RulesValidator._validate_discussion_sub_action(action, game_state, agent_role)
+        
+        return True, None
+
+    @staticmethod
+    def _validate_discussion_sub_action(
+        action: WerewolfAction,
+        game_state: GameState,
+        agent_role: AgentRole
+    ) -> tuple[bool, Optional[str]]:
+        """Validate discussion sub-actions based on role and content"""
+        if not action.discussion_action_type:
+            return True, None  # General discussion is always allowed
+        
+        sub_action = action.discussion_action_type
+        
+        # Everyone can do these actions
+        if sub_action in [DiscussionActionType.GENERAL_DISCUSSION, DiscussionActionType.REVEAL_IDENTITY, 
+                         DiscussionActionType.ACCUSE, DiscussionActionType.DEFEND, DiscussionActionType.CLAIM_ROLE]:
+            return True, None
+        
+        # Role-specific actions
+        if sub_action == DiscussionActionType.REVEAL_INVESTIGATION:
+            if agent_role != AgentRole.SEER:
+                return False, "Only seers can reveal investigation results"
+            return True, None
+            
+        elif sub_action == DiscussionActionType.REVEAL_HEALED_KILLED:
+            if agent_role != AgentRole.WITCH:
+                return False, "Only witches can reveal healing/killing information"
+            return True, None
+            
+        elif sub_action == DiscussionActionType.REVEAL_PROTECTED:
+            if agent_role != AgentRole.DOCTOR:
+                return False, "Only doctors can reveal protection information"
+            return True, None
+            
+        elif sub_action == DiscussionActionType.REVEAL_WEREWOLF:
+            if agent_role != AgentRole.WEREWOLF:
+                return False, "Only werewolves can reveal other werewolves"
+            # Validate that target is actually a werewolf
+            if action.target_agent_id:
+                target_role = game_state.role_assignments.get(action.target_agent_id)
+                if target_role != AgentRole.WEREWOLF.value:
+                    return False, "Can only reveal actual werewolves"
+            return True, None
+        
         return True, None
 
     @staticmethod

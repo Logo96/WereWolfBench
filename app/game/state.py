@@ -3,7 +3,7 @@
 from typing import Dict, List, Optional, Set
 from datetime import datetime
 import random
-from app.types.agent import AgentRole, WerewolfAction, ActionType
+from app.types.agent import AgentRole, WerewolfAction, ActionType, DiscussionActionType
 from app.types.game import GameState, GamePhase, GameStatus, RoundRecord
 
 
@@ -245,10 +245,121 @@ class StateManager:
         )
 
     @staticmethod
+    def process_discussion_action(
+        game_state: GameState,
+        action: WerewolfAction
+    ) -> None:
+        """
+        Process discussion sub-actions and track reveals for metrics.
+        """
+        if action.action_type != ActionType.DISCUSS or not action.discussion_action_type:
+            return
+        
+        # Track reveals for metrics
+        if action.discussion_action_type == DiscussionActionType.REVEAL_IDENTITY:
+            StateManager._track_identity_reveal(game_state, action)
+        elif action.discussion_action_type == DiscussionActionType.REVEAL_INVESTIGATION:
+            StateManager._track_investigation_reveal(game_state, action)
+        elif action.discussion_action_type == DiscussionActionType.REVEAL_HEALED_KILLED:
+            StateManager._track_heal_kill_reveal(game_state, action)
+        elif action.discussion_action_type == DiscussionActionType.REVEAL_PROTECTED:
+            StateManager._track_protection_reveal(game_state, action)
+        elif action.discussion_action_type == DiscussionActionType.ACCUSE:
+            StateManager._track_accusation(game_state, action)
+        elif action.discussion_action_type == DiscussionActionType.REVEAL_WEREWOLF:
+            StateManager._track_werewolf_reveal(game_state, action)
+
+    @staticmethod
+    def _track_identity_reveal(game_state: GameState, action: WerewolfAction) -> None:
+        """Track when an agent reveals their own identity"""
+        if "identity_reveals" not in game_state.metadata:
+            game_state.metadata["identity_reveals"] = []
+        
+        game_state.metadata["identity_reveals"].append({
+            "agent_id": action.agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp,
+            "revealed_role": game_state.role_assignments.get(action.agent_id)
+        })
+
+    @staticmethod
+    def _track_investigation_reveal(game_state: GameState, action: WerewolfAction) -> None:
+        """Track when a seer reveals investigation results"""
+        if "investigation_reveals" not in game_state.metadata:
+            game_state.metadata["investigation_reveals"] = []
+        
+        # Get investigation results for this seer
+        seer_investigations = []
+        for investigation in game_state.seer_investigations.values():
+            if investigation["seer_id"] == action.agent_id:
+                seer_investigations.append(investigation)
+        
+        game_state.metadata["investigation_reveals"].append({
+            "seer_id": action.agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp,
+            "revealed_investigations": seer_investigations
+        })
+
+    @staticmethod
+    def _track_heal_kill_reveal(game_state: GameState, action: WerewolfAction) -> None:
+        """Track when a witch reveals healing/killing information"""
+        if "heal_kill_reveals" not in game_state.metadata:
+            game_state.metadata["heal_kill_reveals"] = []
+        
+        game_state.metadata["heal_kill_reveals"].append({
+            "witch_id": action.agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp,
+            "killed_this_night": game_state.killed_this_night,
+            "heal_used": game_state.witch_heal_used
+        })
+
+    @staticmethod
+    def _track_protection_reveal(game_state: GameState, action: WerewolfAction) -> None:
+        """Track when a doctor reveals protection information"""
+        if "protection_reveals" not in game_state.metadata:
+            game_state.metadata["protection_reveals"] = []
+        
+        game_state.metadata["protection_reveals"].append({
+            "doctor_id": action.agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp,
+            "protected_target": action.target_agent_id
+        })
+
+    @staticmethod
+    def _track_accusation(game_state: GameState, action: WerewolfAction) -> None:
+        """Track accusations made during discussion"""
+        if "accusations" not in game_state.metadata:
+            game_state.metadata["accusations"] = []
+        
+        game_state.metadata["accusations"].append({
+            "accuser_id": action.agent_id,
+            "accused_id": action.target_agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp,
+            "is_correct": action.target_agent_id and game_state.role_assignments.get(action.target_agent_id) == AgentRole.WEREWOLF.value
+        })
+
+    @staticmethod
+    def _track_werewolf_reveal(game_state: GameState, action: WerewolfAction) -> None:
+        """Track when a werewolf reveals another werewolf"""
+        if "werewolf_reveals" not in game_state.metadata:
+            game_state.metadata["werewolf_reveals"] = []
+        
+        game_state.metadata["werewolf_reveals"].append({
+            "revealer_id": action.agent_id,
+            "revealed_werewolf_id": action.target_agent_id,
+            "round": game_state.round_number,
+            "timestamp": action.timestamp
+        })
+
+    @staticmethod
     def get_visible_state(game_state: GameState, agent_id: str) -> Dict:
         """
         Get the game state visible to a specific agent.
-        Hides information the agent shouldn't know.
+        Includes all public information from previous rounds.
         """
         visible_state = {
             "game_id": game_state.game_id,
@@ -258,6 +369,9 @@ class StateManager:
             "eliminated_agents": game_state.eliminated_agent_ids,
             "your_role": game_state.role_assignments.get(agent_id),
         }
+
+        # Add public information from previous rounds
+        visible_state.update(StateManager._get_public_information(game_state, agent_id))
 
         # Add role-specific information
         agent_role = game_state.role_assignments.get(agent_id)
@@ -293,3 +407,114 @@ class StateManager:
             visible_state["current_votes"] = game_state.current_votes
 
         return visible_state
+
+    @staticmethod
+    def _get_public_information(game_state: GameState, agent_id: str) -> Dict:
+        """Get all public information from previous rounds."""
+        public_info = {
+            "discussion_history": [],
+            "voting_history": [],
+            "elimination_history": [],
+            "night_results": [],
+            "game_summary": []
+        }
+
+        # Get all actions from the game
+        # For now, we'll use a simple approach and get actions from the game state metadata
+        # In a real implementation, we'd have proper action tracking
+        all_actions = []
+        
+        # Note: In a full implementation, this would retrieve actual game actions
+        # For now, the structure is in place for when action tracking is properly implemented
+        
+        # Process actions by round and phase
+        current_round = game_state.round_number
+        round_data = {}
+        
+        # Group actions by round (approximate based on current round)
+        for action in all_actions:
+            # For now, put all actions in the current round
+            # In a real implementation, we'd track round numbers properly
+            round_num = current_round
+            if round_num not in round_data:
+                round_data[round_num] = {
+                    "discussion_actions": [],
+                    "voting_actions": [],
+                    "night_actions": []
+                }
+            
+            # Categorize actions
+            if action.action_type.value == "discuss":
+                round_data[round_num]["discussion_actions"].append({
+                    "agent_id": action.agent_id,
+                    # NOTE: discussion_action_type is hidden from other agents to maintain information hiding
+                    # Only discussion_content is visible to maintain the mystery of whether it's a claim or reveal
+                    "discussion_content": action.discussion_content,
+                    "target_agent_id": action.target_agent_id,
+                    "claimed_role": action.claimed_role,
+                    "revealed_information": action.revealed_information,
+                    "timestamp": action.timestamp.isoformat()
+                })
+            elif action.action_type.value == "vote":
+                round_data[round_num]["voting_actions"].append({
+                    "agent_id": action.agent_id,
+                    "target_agent_id": action.target_agent_id,
+                    "timestamp": action.timestamp.isoformat()
+                })
+            elif action.action_type.value in ["kill", "heal", "poison", "investigate", "protect"]:
+                round_data[round_num]["night_actions"].append({
+                    "agent_id": action.agent_id,
+                    "action_type": action.action_type.value,
+                    "target_agent_id": action.target_agent_id,
+                    "timestamp": action.timestamp.isoformat()
+                })
+
+        # Build discussion history
+        for round_num in sorted(round_data.keys()):
+            discussion_actions = round_data[round_num]["discussion_actions"]
+            if discussion_actions:
+                public_info["discussion_history"].append({
+                    "round": round_num,
+                    "phase": "day_discussion",
+                    "actions": discussion_actions
+                })
+
+        # Build voting history
+        for round_num in sorted(round_data.keys()):
+            voting_actions = round_data[round_num]["voting_actions"]
+            if voting_actions:
+                votes = {action["agent_id"]: action["target_agent_id"] for action in voting_actions}
+                public_info["voting_history"].append({
+                    "round": round_num,
+                    "votes": votes,
+                    "timestamp": voting_actions[0]["timestamp"] if voting_actions else None
+                })
+
+        # Build elimination history from game state
+        if hasattr(game_state, 'eliminated_agent_ids') and game_state.eliminated_agent_ids:
+            for i, eliminated_id in enumerate(game_state.eliminated_agent_ids):
+                public_info["elimination_history"].append({
+                    "round": i + 1,  # Approximate round
+                    "eliminated": eliminated_id,
+                    "method": "voting",  # Default assumption
+                    "reason": "Majority vote"
+                })
+
+        # Build night results summary
+        for round_num in sorted(round_data.keys()):
+            night_actions = round_data[round_num]["night_actions"]
+            if night_actions:
+                public_info["night_results"].append({
+                    "round": round_num,
+                    "actions": night_actions
+                })
+
+        # Build game summary
+        public_info["game_summary"] = {
+            "total_rounds": current_round,
+            "eliminated_count": len(game_state.eliminated_agent_ids),
+            "alive_count": len(game_state.alive_agent_ids),
+            "current_phase": game_state.phase.value
+        }
+
+        return public_info

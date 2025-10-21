@@ -29,6 +29,19 @@ class ActionType(str, Enum):
     PASS = "pass"
 
 
+class DiscussionActionType(str, Enum):
+    """Sub-actions that can be taken during discussion phase"""
+    GENERAL_DISCUSSION = "general_discussion"
+    REVEAL_IDENTITY = "reveal_identity"  # Everyone can reveal their own role
+    REVEAL_INVESTIGATION = "reveal_investigation"  # Seer only - reveal investigation results
+    REVEAL_HEALED_KILLED = "reveal_healed_killed"  # Witch only - reveal who was healed/killed
+    REVEAL_PROTECTED = "reveal_protected"  # Doctor only - reveal who they protected
+    ACCUSE = "accuse"  # Everyone can accuse others
+    DEFEND = "defend"  # Everyone can defend themselves or others
+    CLAIM_ROLE = "claim_role"  # Everyone can claim to have a role (true or false)
+    REVEAL_WEREWOLF = "reveal_werewolf"  # Werewolves can reveal other werewolves (rare)
+
+
 class WerewolfAction(BaseModel):
     """Action taken by an agent in the game"""
     agent_id: str = Field(..., description="ID of the agent taking the action")
@@ -38,6 +51,12 @@ class WerewolfAction(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0, description="Agent's confidence in this action")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional action metadata")
+    
+    # Discussion sub-actions
+    discussion_action_type: Optional[DiscussionActionType] = Field(None, description="Sub-action type for discussion")
+    discussion_content: Optional[str] = Field(None, description="Content of the discussion message")
+    revealed_information: Optional[Dict[str, Any]] = Field(None, description="Information revealed during discussion")
+    claimed_role: Optional[str] = Field(None, description="Role claimed during discussion (for claim_role action)")
 
 
 class AgentProfile(BaseModel):

@@ -80,6 +80,9 @@ class GameEngine:
 
         if action.action_type == ActionType.VOTE:
             game_state.current_votes[action.agent_id] = action.target_agent_id
+        elif action.action_type == ActionType.DISCUSS:
+            # Process discussion sub-actions for metrics tracking
+            self.state_manager.process_discussion_action(game_state, action)
 
         logger.info(
             f"Processed {action.action_type} from {action.agent_id} "

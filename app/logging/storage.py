@@ -97,6 +97,15 @@ class GameLogger:
             "reasoning": action.reasoning
         }
         
+        # Add discussion sub-action information
+        if action.action_type.value == "discuss" and action.discussion_action_type:
+            event_data["discussion_action_type"] = action.discussion_action_type.value
+            event_data["discussion_content"] = action.discussion_content
+            if action.claimed_role:
+                event_data["claimed_role"] = action.claimed_role
+            if action.revealed_information:
+                event_data["revealed_information"] = action.revealed_information
+        
         # Add investigation result for seer actions
         if action.action_type.value == "investigate" and action.target_agent_id:
             # Get the game state to determine if target is werewolf
@@ -178,7 +187,7 @@ class GameLogger:
         if not game_state:
             return None
 
-        return {
+        summary = {
             "game_id": game_id,
             "status": game_state.status.value,
             "phase": game_state.phase.value,
@@ -188,6 +197,71 @@ class GameLogger:
             "alive_agents": len(game_state.alive_agent_ids),
             "eliminated_agents": len(game_state.eliminated_agent_ids)
         }
+
+        # Add discussion metrics
+        summary.update(self._calculate_discussion_metrics(game_state))
+        
+        return summary
+
+    def _calculate_discussion_metrics(self, game_state: GameState) -> Dict[str, Any]:
+        """Calculate metrics related to discussion and reveals."""
+        metrics = {}
+        
+        # Identity reveals
+        identity_reveals = game_state.metadata.get("identity_reveals", [])
+        metrics["identity_reveals_count"] = len(identity_reveals)
+        metrics["first_identity_reveal_round"] = min([r["round"] for r in identity_reveals]) if identity_reveals else None
+        
+        # Investigation reveals
+        investigation_reveals = game_state.metadata.get("investigation_reveals", [])
+        metrics["investigation_reveals_count"] = len(investigation_reveals)
+        
+        # Calculate seer-specific metrics
+        seer_reveals = [r for r in investigation_reveals if r["seer_id"] in game_state.alive_agent_ids or r["seer_id"] in game_state.eliminated_agent_ids]
+        if seer_reveals:
+            metrics["seer_reveals_per_game"] = len(seer_reveals)
+            metrics["first_seer_reveal_round"] = min([r["round"] for r in seer_reveals])
+            
+            # Calculate unmasked wolf percentage
+            total_werewolf_reveals = 0
+            correct_werewolf_reveals = 0
+            for reveal in seer_reveals:
+                for investigation in reveal.get("revealed_investigations", []):
+                    if investigation.get("is_werewolf"):
+                        total_werewolf_reveals += 1
+                        # Check if this led to the werewolf being eliminated
+                        werewolf_id = investigation.get("target_id")
+                        if werewolf_id in game_state.eliminated_agent_ids:
+                            correct_werewolf_reveals += 1
+            
+            metrics["unmasked_wolf_percentage"] = (correct_werewolf_reveals / total_werewolf_reveals * 100) if total_werewolf_reveals > 0 else 0
+            metrics["believed_percentage"] = (correct_werewolf_reveals / total_werewolf_reveals * 100) if total_werewolf_reveals > 0 else 0
+            
+            # Calculate backfired percentage (seer eliminated after revealing)
+            seer_eliminated_after_reveal = 0
+            for reveal in seer_reveals:
+                seer_id = reveal["seer_id"]
+                reveal_round = reveal["round"]
+                if seer_id in game_state.eliminated_agent_ids:
+                    # Check if seer was eliminated in the same round or shortly after
+                    seer_eliminated_round = next((r for r in game_state.round_history if seer_id in r.eliminated_agents), None)
+                    if seer_eliminated_round and seer_eliminated_round.round_number <= reveal_round + 1:
+                        seer_eliminated_after_reveal += 1
+            
+            metrics["backfired_percentage"] = (seer_eliminated_after_reveal / len(seer_reveals) * 100) if seer_reveals else 0
+        
+        # Accusation metrics
+        accusations = game_state.metadata.get("accusations", [])
+        metrics["accusations_count"] = len(accusations)
+        correct_accusations = [a for a in accusations if a.get("is_correct", False)]
+        metrics["correct_accusations_percentage"] = (len(correct_accusations) / len(accusations) * 100) if accusations else 0
+        
+        # Role-specific reveals
+        metrics["heal_kill_reveals_count"] = len(game_state.metadata.get("heal_kill_reveals", []))
+        metrics["protection_reveals_count"] = len(game_state.metadata.get("protection_reveals", []))
+        metrics["werewolf_reveals_count"] = len(game_state.metadata.get("werewolf_reveals", []))
+        
+        return metrics
 
     def _has_state_changed(self, game_state: GameState) -> bool:
         """Check if the game state has changed since last logged."""
