@@ -80,10 +80,15 @@ class GameLogger:
         """Get all agents in a game."""
         return self.game_agents.get(game_id, [])
 
-    def save_action(self, game_id: str, action: WerewolfAction) -> None:
+    def save_action(self, game_id: str, action: WerewolfAction, round_number: int = None) -> None:
         """Save an action taken in a game."""
         if game_id not in self.game_actions:
             self.game_actions[game_id] = []
+        
+        # Add round number to action metadata if not already present
+        if round_number is not None and "round_number" not in action.metadata:
+            action.metadata["round_number"] = round_number
+        
         self.game_actions[game_id].append(action)
 
         event_data = {
@@ -94,7 +99,8 @@ class GameLogger:
             "action_type": action.action_type.value,
             "target": action.target_agent_id,
             "confidence": action.confidence,
-            "reasoning": action.reasoning
+            "reasoning": action.reasoning,
+            "round_number": round_number
         }
         
         # Add discussion sub-action information

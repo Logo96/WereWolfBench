@@ -209,18 +209,19 @@ class GameEngine:
 
         return game_state, eliminated
 
-    def get_agent_view(self, game_state: GameState, agent_id: str) -> Dict:
+    def get_agent_view(self, game_state: GameState, agent_id: str, storage=None) -> Dict:
         """
         Get the game state from an agent's perspective.
 
         Args:
             game_state: Current game state
             agent_id: ID of the agent
+            storage: GameLogger instance for accessing action history
 
         Returns:
             Filtered game state visible to the agent
         """
-        return self.state_manager.get_visible_state(game_state, agent_id)
+        return self.state_manager.get_visible_state(game_state, agent_id, storage)
 
     def _get_expected_agents_for_phase(self, game_state: GameState) -> set:
         """Get set of agents expected to act in current phase"""

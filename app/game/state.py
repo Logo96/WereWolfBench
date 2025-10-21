@@ -356,7 +356,7 @@ class StateManager:
         })
 
     @staticmethod
-    def get_visible_state(game_state: GameState, agent_id: str) -> Dict:
+    def get_visible_state(game_state: GameState, agent_id: str, storage=None) -> Dict:
         """
         Get the game state visible to a specific agent.
         Includes all public information from previous rounds.
@@ -371,7 +371,7 @@ class StateManager:
         }
 
         # Add public information from previous rounds
-        visible_state.update(StateManager._get_public_information(game_state, agent_id))
+        visible_state.update(StateManager._get_public_information(game_state, agent_id, storage))
 
         # Add role-specific information
         agent_role = game_state.role_assignments.get(agent_id)
@@ -409,41 +409,36 @@ class StateManager:
         return visible_state
 
     @staticmethod
-    def _get_public_information(game_state: GameState, agent_id: str) -> Dict:
+    def _get_public_information(game_state: GameState, agent_id: str, storage=None) -> Dict:
         """Get all public information from previous rounds."""
         public_info = {
             "discussion_history": [],
             "voting_history": [],
             "elimination_history": [],
-            "night_results": [],
             "game_summary": []
         }
 
         # Get all actions from the game
-        # For now, we'll use a simple approach and get actions from the game state metadata
-        # In a real implementation, we'd have proper action tracking
         all_actions = []
-        
-        # Note: In a full implementation, this would retrieve actual game actions
-        # For now, the structure is in place for when action tracking is properly implemented
+        if storage:
+            all_actions = storage.get_game_actions(game_state.game_id)
         
         # Process actions by round and phase
         current_round = game_state.round_number
         round_data = {}
         
-        # Group actions by round (approximate based on current round)
+        # Group actions by round using stored round numbers
         for action in all_actions:
-            # For now, put all actions in the current round
-            # In a real implementation, we'd track round numbers properly
-            round_num = current_round
+            # Get round number from action metadata or use current round as fallback
+            round_num = action.metadata.get("round_number", current_round)
             if round_num not in round_data:
                 round_data[round_num] = {
                     "discussion_actions": [],
-                    "voting_actions": [],
-                    "night_actions": []
+                    "voting_actions": []
                 }
             
-            # Categorize actions
+            # Only include PUBLIC actions - discussion and voting
+            # Night actions (kill, heal, poison, investigate, protect) are PRIVATE
             if action.action_type.value == "discuss":
                 round_data[round_num]["discussion_actions"].append({
                     "agent_id": action.agent_id,
@@ -461,13 +456,8 @@ class StateManager:
                     "target_agent_id": action.target_agent_id,
                     "timestamp": action.timestamp.isoformat()
                 })
-            elif action.action_type.value in ["kill", "heal", "poison", "investigate", "protect"]:
-                round_data[round_num]["night_actions"].append({
-                    "agent_id": action.agent_id,
-                    "action_type": action.action_type.value,
-                    "target_agent_id": action.target_agent_id,
-                    "timestamp": action.timestamp.isoformat()
-                })
+            # NOTE: Night actions (kill, heal, poison, investigate, protect) are NOT included
+            # as they are private and should not be visible to other agents
 
         # Build discussion history
         for round_num in sorted(round_data.keys()):
@@ -500,14 +490,8 @@ class StateManager:
                     "reason": "Majority vote"
                 })
 
-        # Build night results summary
-        for round_num in sorted(round_data.keys()):
-            night_actions = round_data[round_num]["night_actions"]
-            if night_actions:
-                public_info["night_results"].append({
-                    "round": round_num,
-                    "actions": night_actions
-                })
+        # Night results are not included in public information
+        # as night actions (kill, heal, poison, investigate, protect) are private
 
         # Build game summary
         public_info["game_summary"] = {

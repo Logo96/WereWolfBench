@@ -174,7 +174,7 @@ class GameOrchestrator:
         game_state: GameState
     ) -> Optional[WerewolfAction]:
         """Request an action from a white agent via A2A SDK."""
-        visible_state = self.engine.get_agent_view(game_state, agent.agent_id)
+        visible_state = self.engine.get_agent_view(game_state, agent.agent_id, self.storage)
 
         client = self.agent_clients.get(agent.agent_id)
         if not client:
@@ -293,7 +293,7 @@ class GameOrchestrator:
         success, error_msg = self.engine.process_action(game_state, action)
 
         if success:
-            self.storage.save_action(game_id, action)
+            self.storage.save_action(game_id, action, game_state.round_number)
             self.storage.save_game(game_state)
             logger.debug(f"Processed action from {action.agent_id}: {action.action_type}")
         else:

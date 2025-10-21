@@ -36,7 +36,7 @@ def _choose_discussion_sub_action(
     role: str, 
     visible_state: Dict[str, Any], 
     alive_agents: Sequence[str]
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Choose a discussion sub-action based on role and game state."""
     
     # 70% chance to take a discussion sub-action (increased from 30%)
@@ -52,10 +52,10 @@ def _choose_discussion_sub_action(
         else:  # villager, hunter, etc.
             return _villager_discussion_action(visible_state, alive_agents)
     else:
-        return None, None, None
+        return None, None, None, None
 
 
-def _seer_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _seer_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Seer discussion actions."""
     investigation_results = visible_state.get("investigation_results", [])
     
@@ -70,68 +70,68 @@ def _seer_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequenc
         else:
             content = f"I investigated {target_id} and they are innocent. We can trust them."
         
-        return DiscussionActionType.REVEAL_INVESTIGATION.value, content, None
+        return DiscussionActionType.REVEAL_INVESTIGATION.value, content, None, target_id
     
     # 30% chance to reveal identity (increased from 20%)
     elif random.random() < 0.3:
-        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the seer. I have been investigating players at night to find werewolves.", "seer"
+        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the seer. I have been investigating players at night to find werewolves.", "seer", None
     
     # 25% chance to accuse someone (increased from 15%)
     elif random.random() < 0.35:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.ACCUSE.value, f"I suspect {target} is acting suspicious. We should watch them closely.", None
+            return DiscussionActionType.ACCUSE.value, f"I suspect {target} is acting suspicious. We should watch them closely.", None, target
     
     # Default to general discussion
-    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm analyzing the information we have. We need to be careful about who we trust.", None
+    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm analyzing the information we have. We need to be careful about who we trust.", None, None
 
 
-def _doctor_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _doctor_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Doctor discussion actions."""
     # 50% chance to reveal protection (increased from 30%)
     if random.random() < 0.5:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.REVEAL_PROTECTED.value, f"I protected {target} last night. They should be safe from werewolf attacks.", None
+            return DiscussionActionType.REVEAL_PROTECTED.value, f"I protected {target} last night. They should be safe from werewolf attacks.", None, target
     
     # 30% chance to reveal identity (increased from 20%)
     elif random.random() < 0.3:
-        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the doctor. I have been protecting players at night.", "doctor"
+        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the doctor. I have been protecting players at night.", "doctor", None
     
     # 15% chance to defend someone
     elif random.random() < 0.35:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None
+            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None, target
     
     # Default to general discussion
-    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to keep everyone safe. We need to work together to find the werewolves.", None
+    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to keep everyone safe. We need to work together to find the werewolves.", None, None
 
 
-def _witch_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _witch_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Witch discussion actions."""
     killed_this_night = visible_state.get("killed_this_night", [])
     
     # 25% chance to reveal healing info
     if random.random() < 0.35 and killed_this_night:
         healed = random.choice(killed_this_night)
-        return DiscussionActionType.REVEAL_HEALED_KILLED.value, f"I healed {healed} last night. They were attacked but are now safe.", None
+        return DiscussionActionType.REVEAL_HEALED_KILLED.value, f"I healed {healed} last night. They were attacked but are now safe.", None, healed
     
     # 20% chance to reveal identity
     elif random.random() < 0.3:
-        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the witch. I have been healing and poisoning players at night.", "witch"
+        return DiscussionActionType.REVEAL_IDENTITY.value, "I am the witch. I have been healing and poisoning players at night.", "witch", None
     
     # 15% chance to accuse someone
     elif random.random() < 0.35:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.ACCUSE.value, f"I think {target} might be a werewolf. We should investigate them.", None
+            return DiscussionActionType.ACCUSE.value, f"I think {target} might be a werewolf. We should investigate them.", None, target
     
     # Default to general discussion
-    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm using my powers to help the village. We need to be strategic about this.", None
+    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm using my powers to help the village. We need to be strategic about this.", None, None
 
 
-def _werewolf_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _werewolf_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Werewolf discussion actions."""
     werewolf_teammates = visible_state.get("werewolf_teammates", [])
     
@@ -140,45 +140,45 @@ def _werewolf_discussion_action(visible_state: Dict[str, Any], alive_agents: Seq
         villagers = [aid for aid in alive_agents if aid not in werewolf_teammates]
         target = _first_alive(villagers)
         if target:
-            return DiscussionActionType.ACCUSE.value, f"I think {target} is acting suspicious. We should vote for them.", None
+            return DiscussionActionType.ACCUSE.value, f"I think {target} is acting suspicious. We should vote for them.", None, target
     
     # 30% chance to defend a teammate (increased from 20%)
     elif random.random() < 0.3:
         teammates = [aid for aid in alive_agents if aid in werewolf_teammates]
         target = _first_alive(teammates)
         if target:
-            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None
+            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None, target
     
     # 35% chance to claim a fake role (increased from 15%)
     elif random.random() < 0.35:
         fake_roles = ["villager", "hunter", "doctor"]
         fake_role = random.choice(fake_roles)
-        return DiscussionActionType.CLAIM_ROLE.value, f"I am a {fake_role}. I have been helping the village.", fake_role
+        return DiscussionActionType.CLAIM_ROLE.value, f"I am a {fake_role}. I have been helping the village.", fake_role, None
     
     # Default to general discussion
-    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to figure out who the werewolves are. We need to be careful.", None
+    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to figure out who the werewolves are. We need to be careful.", None, None
 
 
-def _villager_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def _villager_discussion_action(visible_state: Dict[str, Any], alive_agents: Sequence[str]) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Villager discussion actions."""
     # 40% chance to reveal identity (increased from 25%)
     if random.random() < 0.4:
-        return DiscussionActionType.REVEAL_IDENTITY.value, "I am a villager. I have been trying to help find the werewolves.", "villager"
+        return DiscussionActionType.REVEAL_IDENTITY.value, "I am a villager. I have been trying to help find the werewolves.", "villager", None
     
     # 30% chance to accuse someone (increased from 20%)
     elif random.random() < 0.3:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.ACCUSE.value, f"I think {target} might be a werewolf. We should watch them.", None
+            return DiscussionActionType.ACCUSE.value, f"I think {target} might be a werewolf. We should watch them.", None, target
     
     # 25% chance to defend someone (increased from 15%)
     elif random.random() < 0.25:
         target = _first_alive(alive_agents, skip=[visible_state.get("agent_id")])
         if target:
-            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None
+            return DiscussionActionType.DEFEND.value, f"I think {target} is innocent. We should not vote for them.", None, target
     
     # Default to general discussion
-    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to help the village. We need to work together to find the werewolves.", None
+    return DiscussionActionType.GENERAL_DISCUSSION.value, "I'm trying to help the village. We need to work together to find the werewolves.", None, None
 
 
 def _build_action_payload(
@@ -263,7 +263,7 @@ def _build_action_payload(
     
     # Add discussion sub-action fields if this is a discuss action
     if phase == "day_discussion" and action_type == ActionType.DISCUSS.value:
-        discussion_action_type, discussion_content, claimed_role = _choose_discussion_sub_action(
+        discussion_action_type, discussion_content, claimed_role, discussion_target = _choose_discussion_sub_action(
             agent_id, role, visible_state, alive_agents
         )
         if discussion_action_type:
@@ -272,6 +272,9 @@ def _build_action_payload(
             action_payload["discussion_content"] = discussion_content
         if claimed_role:
             action_payload["claimed_role"] = claimed_role
+        # Set target_agent_id for discussion actions that target someone
+        if discussion_target:
+            action_payload["target_agent_id"] = discussion_target
 
     return {
         "action": action_payload,
