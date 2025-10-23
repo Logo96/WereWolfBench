@@ -141,7 +141,7 @@ def demonstrate_green_agent_evaluation():
 METRICS CALCULATED:
 • Rule compliance percentages (overall, by agent, by action type, by phase)
 • Discussion action counts and types
-• Identity reveals and role claims (with truthfulness tracking)
+• Identity reveals and role claims
 • Investigation reveals and accuracy
 • Accusation patterns and correctness
 • Action counts by type
@@ -150,41 +150,75 @@ METRICS CALCULATED:
 • Seer-specific metrics (reveals, unmasked wolf %, backfired %)
     """)
 
-def show_concrete_examples():
-    """Show concrete evaluation examples"""
-    print_section("📊 CONCRETE EVALUATION EXAMPLES", """
-🎯 SAMPLE AGENT SCORES:
-  agent_0: 85.5/100 (Rule Compliance: 100%, Strategic: 80%, Communication: 90%)
-  agent_1: 78.2/100 (Rule Compliance: 95%, Strategic: 75%, Communication: 85%)
-  agent_2: 92.1/100 (Rule Compliance: 100%, Strategic: 95%, Communication: 88%)
-  agent_3: 73.8/100 (Rule Compliance: 90%, Strategic: 70%, Communication: 75%)
-  agent_4: 88.9/100 (Rule Compliance: 100%, Strategic: 85%, Communication: 92%)
-  agent_5: 81.3/100 (Rule Compliance: 95%, Strategic: 80%, Communication: 82%)
-  agent_6: 76.4/100 (Rule Compliance: 90%, Strategic: 75%, Communication: 78%)
-  agent_7: 89.7/100 (Rule Compliance: 100%, Strategic: 90%, Communication: 87%)
 
-📏 RULE COMPLIANCE ANALYSIS:
-  Total Actions: 25
-  Valid Actions: 24
-  Invalid Actions: 1
-  Compliance Rate: 96.2%
+def demonstrate_dummy_agent_testing():
+    """Demonstrate how dummy agents test the system implementation"""
+    print_section("🤖 DUMMY AGENT TESTING SYSTEM", """
+🧪 HOW DUMMY AGENTS TEST THE IMPLEMENTATION:
 
-🔍 SPECIFIC EVALUATION EXAMPLES:
+1. AUTOMATED TESTING FRAMEWORK:
+   • Dummy agents simulate real AI agents with predictable behaviors
+   • Each agent has role-specific strategies and decision patterns
+   • 10% mistake rate intentionally introduced to test error handling
+   • Probabilistic actions ensure varied test scenarios
 
-Example 1 - Rule Compliance:
-• Agent tries to kill during day phase → INVALID (0 points)
-• Agent votes for themselves → INVALID (0 points)
-• Agent investigates as non-seer → INVALID (0 points)
+2. ROLE-SPECIFIC BEHAVIOR TESTING:
+   
+   SEER AGENTS:
+   • 60% chance to reveal investigation results
+   • 30% chance to reveal identity as seer
+   • 35% chance to make accusations
+   • Tests investigation reveal patterns and accuracy
 
-Example 2 - Strategic Effectiveness:
-• Seer investigates likely werewolf → HIGH SCORE (90+ points)
-• Villager votes for confirmed werewolf → HIGH SCORE (85+ points)
-• Werewolf votes for other werewolf → LOW SCORE (20 points)
+   DOCTOR AGENTS:
+   • 50% chance to reveal protection actions
+   • 30% chance to reveal identity as doctor
+   • 35% chance to defend other players
+   • Tests protection strategy and communication
 
-Example 3 - Communication Quality:
-• Agent provides detailed reasoning → HIGH SCORE (90+ points)
-• Agent makes relevant accusations → HIGH SCORE (85+ points)
-• Agent stays silent all game → LOW SCORE (30 points)
+   WITCH AGENTS:
+   • 35% chance to reveal healing/killing actions
+   • 30% chance to reveal identity as witch
+   • 35% chance to make accusations
+   • Tests healing/poisoning strategy and information sharing
+
+   WEREWOLF AGENTS:
+   • 60% chance to accuse villagers
+   • 30% chance to defend teammates
+   • 35% chance to claim fake roles
+   • Tests deception strategies and team coordination
+
+   VILLAGER AGENTS:
+   • 40% chance to reveal identity
+   • 30% chance to make accusations
+   • 25% chance to defend others
+   • Tests basic participation and reasoning
+
+3. INVALID ACTION TESTING:
+   • 10% mistake rate introduces rule violations
+   • Tests system's ability to handle invalid actions
+   • Examples: Voting for self, killing during day phase
+   • Validates error logging and compliance tracking
+
+4. SYSTEM COMPONENT TESTING:
+
+   GAME ENGINE TESTING:
+   • Action validation and rule enforcement
+   • State transitions and phase management
+   • Role-specific ability processing
+   • Error handling and recovery
+
+   EVALUATION SYSTEM TESTING:
+   • Metrics calculation accuracy
+   • Compliance tracking and reporting
+   • Performance scoring algorithms
+   • Multi-dimensional assessment
+
+   LOGGING SYSTEM TESTING:
+   • Event capture and serialization
+   • Invalid action logging
+   • Game completion tracking
+   • JSONL format validation
     """)
 
 def explain_design_notes():
@@ -253,10 +287,10 @@ To run a complete demo with the Werewolf benchmark system:
    python -m app.main &
 
 2. Start White Agents (Dummy Agents):
-   python scripts/run_dummy_simulation.py --num-agents 8 --num-werewolves 2 --has-seer --has-doctor --has-hunter --has-witch --start-game
+   python scripts/run_dummy_simulation.py --num-agents 8 --num-werewolves 2 --has-hunter --has-witch --start-game
 
-3. Extract metrics from the game:
-   python extract_game_metrics.py game_logs/game_<game_id>.jsonl
+3. Parse metrics from the game:
+   python parse_evaluation_metrics.py game_logs/game_<game_id>.jsonl
 
 4. View the results:
    • Rule compliance percentages
@@ -268,8 +302,8 @@ The system will automatically:
 • Assign roles to agents
 • Run the game with all phases
 • Evaluate each agent's performance
-• Calculate comprehensive metrics
-• Generate detailed reports
+• Parse comprehensive metrics from game logs
+• Display detailed reports in a clean format
     """)
 
 def main():
@@ -293,8 +327,8 @@ def main():
     demonstrate_green_agent_evaluation()
     input("\nPress Enter to continue...")
     
-    # 5. Concrete Examples
-    show_concrete_examples()
+    # 5. Dummy Agent Testing
+    demonstrate_dummy_agent_testing()
     input("\nPress Enter to continue...")
     
     # 6. Design Notes

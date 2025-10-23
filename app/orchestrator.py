@@ -359,7 +359,32 @@ class GameOrchestrator:
         self.storage.log_game_completed(game_state)
         self.storage.log_game_ended(game_id, game_state.winner, game_state.round_number)
 
-        # TODO: Calculate and store evaluation scores
+        # Calculate and store evaluation scores automatically
+        try:
+            from extract_game_metrics import extract_game_metrics
+            import os
+            
+            # Find the game log file
+            game_log_path = f"game_logs/game_{game_id}.jsonl"
+            if os.path.exists(game_log_path):
+                logger.info(f"Calculating metrics for game {game_id}")
+                metrics = extract_game_metrics(game_log_path)
+                
+                # Log the metrics as a special event
+                self.storage._write_game_event(game_id, {
+                    "event": "evaluation_metrics",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "game_id": game_id,
+                    "metrics": metrics
+                })
+                
+                logger.info(f"Game {game_id} evaluation completed with {len(metrics)} metrics")
+            else:
+                logger.warning(f"Game log not found for metrics calculation: {game_log_path}")
+        except Exception as e:
+            logger.error(f"Failed to calculate metrics for game {game_id}: {e}")
+            import traceback
+            traceback.print_exc()
 
         for agent_id in list(self.agent_clients.keys()):
             if agent_id in game_state.agent_ids:
