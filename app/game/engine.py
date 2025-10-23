@@ -74,6 +74,9 @@ class GameEngine:
             action, game_state, agent_role
         )
 
+        # Track rule compliance for metrics
+        self._track_rule_compliance(game_state, action, is_valid, error_msg)
+
         if not is_valid:
             logger.warning(f"Invalid action from {action.agent_id}: {error_msg}")
             return False, error_msg
@@ -265,3 +268,90 @@ class GameEngine:
             if action.action_type == ActionType.PROTECT:
                 return action.target_agent_id
         return None
+
+    def _track_rule_compliance(
+        self,
+        game_state: GameState,
+        action: WerewolfAction,
+        is_valid: bool,
+        error_msg: Optional[str]
+    ) -> None:
+        """Track rule compliance for metrics calculation."""
+        # Initialize rule compliance tracking if not exists
+        if "rule_compliance" not in game_state.metadata:
+            game_state.metadata["rule_compliance"] = {
+                "total_actions": 0,
+                "valid_actions": 0,
+                "invalid_actions": 0,
+                "by_agent": {},
+                "by_action_type": {},
+                "by_phase": {},
+                "error_types": {}
+            }
+        
+        compliance = game_state.metadata["rule_compliance"]
+        agent_id = action.agent_id
+        action_type = action.action_type.value
+        phase = game_state.phase.value
+        
+        # Update overall counts
+        compliance["total_actions"] += 1
+        if is_valid:
+            compliance["valid_actions"] += 1
+        else:
+            compliance["invalid_actions"] += 1
+            
+            # Track error types
+            error_type = error_msg or "Unknown error"
+            compliance["error_types"][error_type] = compliance["error_types"].get(error_type, 0) + 1
+        
+        # Track by agent
+        if agent_id not in compliance["by_agent"]:
+            compliance["by_agent"][agent_id] = {
+                "total": 0,
+                "valid": 0,
+                "invalid": 0,
+                "compliance_rate": 0.0
+            }
+        
+        agent_stats = compliance["by_agent"][agent_id]
+        agent_stats["total"] += 1
+        if is_valid:
+            agent_stats["valid"] += 1
+        else:
+            agent_stats["invalid"] += 1
+        agent_stats["compliance_rate"] = (agent_stats["valid"] / agent_stats["total"]) * 100
+        
+        # Track by action type
+        if action_type not in compliance["by_action_type"]:
+            compliance["by_action_type"][action_type] = {
+                "total": 0,
+                "valid": 0,
+                "invalid": 0,
+                "compliance_rate": 0.0
+            }
+        
+        action_stats = compliance["by_action_type"][action_type]
+        action_stats["total"] += 1
+        if is_valid:
+            action_stats["valid"] += 1
+        else:
+            action_stats["invalid"] += 1
+        action_stats["compliance_rate"] = (action_stats["valid"] / action_stats["total"]) * 100
+        
+        # Track by phase
+        if phase not in compliance["by_phase"]:
+            compliance["by_phase"][phase] = {
+                "total": 0,
+                "valid": 0,
+                "invalid": 0,
+                "compliance_rate": 0.0
+            }
+        
+        phase_stats = compliance["by_phase"][phase]
+        phase_stats["total"] += 1
+        if is_valid:
+            phase_stats["valid"] += 1
+        else:
+            phase_stats["invalid"] += 1
+        phase_stats["compliance_rate"] = (phase_stats["valid"] / phase_stats["total"]) * 100

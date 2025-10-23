@@ -190,6 +190,10 @@ def _build_action_payload(
     alive_agents: Sequence[str] = visible_state.get("alive_agents", [])
     role = task_payload.get("your_role") or visible_state.get("your_role")
     phase = task_payload.get("phase")
+    
+    # Add mistake rate for testing invalid actions (10% chance)
+    import random
+    make_mistake = random.random() < 0.1  # 10% chance of invalid action
 
     action_type = ActionType.PASS.value
     target: Optional[str] = None
@@ -197,11 +201,18 @@ def _build_action_payload(
 
     if phase == "day_discussion":
         action_type = ActionType.DISCUSS.value
+        # Introduce invalid actions for testing
+        if make_mistake and random.random() < 0.5:
+            action_type = ActionType.KILL.value  # Invalid: can't kill during discussion
+            target = _first_alive(alive_agents, skip=[agent_id])
     elif phase == "day_voting":
         action_type = ActionType.VOTE.value
         target = _first_alive(alive_agents, skip=[agent_id])
         if not target:
             action_type = ActionType.PASS.value
+        # Introduce invalid actions for testing
+        if make_mistake and random.random() < 0.5:
+            target = agent_id  # Invalid: can't vote for yourself
     elif phase == "night_werewolf":
         if role == AgentRole.WEREWOLF.value:
             teammates = set(visible_state.get("werewolf_teammates", []))

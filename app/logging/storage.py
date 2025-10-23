@@ -9,6 +9,20 @@ from typing import Dict, List, Optional, Any
 from app.types.game import GameState
 from app.types.agent import WerewolfAction, AgentProfile
 
+
+def _serialize_metadata_list(metadata_list: List[Dict]) -> List[Dict]:
+    """Convert datetime objects in metadata to ISO strings for JSON serialization."""
+    serialized = []
+    for item in metadata_list:
+        serialized_item = {}
+        for key, value in item.items():
+            if isinstance(value, datetime):
+                serialized_item[key] = value.isoformat()
+            else:
+                serialized_item[key] = value
+        serialized.append(serialized_item)
+    return serialized
+
 logger = logging.getLogger(__name__)
 
 
@@ -167,9 +181,28 @@ class GameLogger:
             "total_rounds": rounds
         })
 
+    def log_invalid_action(self, game_id: str, action: WerewolfAction, error_msg: str, round_number: int) -> None:
+        """Log invalid actions for analysis."""
+        self._write_game_event(game_id, {
+            "event": "invalid_action",
+            "timestamp": action.timestamp.isoformat(),
+            "game_id": game_id,
+            "agent_id": action.agent_id,
+            "action_type": action.action_type.value,
+            "target": action.target_agent_id,
+            "confidence": action.confidence,
+            "reasoning": action.reasoning,
+            "round_number": round_number,
+            "error_message": error_msg,
+            "discussion_action_type": getattr(action, 'discussion_action_type', None),
+            "discussion_content": getattr(action, 'discussion_content', None)
+        })
+
     def log_game_completed(self, game_state: GameState) -> None:
         """Log game completion with final state."""
-        self._write_game_event(game_state.game_id, {
+        print(f"DEBUG: Logging game_completed for {game_state.game_id}")
+        try:
+            self._write_game_event(game_state.game_id, {
             "event": "game_completed",
             "timestamp": datetime.utcnow().isoformat(),
             "game_id": game_state.game_id,
@@ -180,8 +213,13 @@ class GameLogger:
             "eliminated": game_state.eliminated_agent_ids,
             "winner": game_state.winner,
             "total_rounds": game_state.round_number,
-            "role_assignments": game_state.role_assignments
+            "role_assignments": game_state.role_assignments,
+            "rule_compliance": game_state.metadata.get("rule_compliance", {})
         })
+        except Exception as e:
+            print(f"ERROR: Failed to log game_completed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def list_games(self) -> List[str]:
         """List all game IDs."""
@@ -266,6 +304,18 @@ class GameLogger:
         metrics["heal_kill_reveals_count"] = len(game_state.metadata.get("heal_kill_reveals", []))
         metrics["protection_reveals_count"] = len(game_state.metadata.get("protection_reveals", []))
         metrics["werewolf_reveals_count"] = len(game_state.metadata.get("werewolf_reveals", []))
+        
+        # Rule compliance metrics
+        rule_compliance = game_state.metadata.get("rule_compliance", {})
+        if rule_compliance:
+            metrics["rule_compliance_percentage"] = (rule_compliance.get("valid_actions", 0) / rule_compliance.get("total_actions", 1)) * 100
+            metrics["total_actions"] = rule_compliance.get("total_actions", 0)
+            metrics["valid_actions"] = rule_compliance.get("valid_actions", 0)
+            metrics["invalid_actions"] = rule_compliance.get("invalid_actions", 0)
+            metrics["rule_compliance_by_agent"] = rule_compliance.get("by_agent", {})
+            metrics["rule_compliance_by_action_type"] = rule_compliance.get("by_action_type", {})
+            metrics["rule_compliance_by_phase"] = rule_compliance.get("by_phase", {})
+            metrics["rule_compliance_error_types"] = rule_compliance.get("error_types", {})
         
         return metrics
 

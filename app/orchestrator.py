@@ -120,7 +120,9 @@ class GameOrchestrator:
 
                     self.storage.save_game(game_state)
 
+                    print(f"DEBUG: Game {game_id} status: {game_state.status}, checking against {GameStatus.COMPLETED}")
                     if game_state.status == GameStatus.COMPLETED:
+                        print(f"DEBUG: Game {game_id} is completed, calling _finalize_game")
                         # Log final game state with winner
                         self.storage.save_game(game_state, force_log=True)
                         await self._finalize_game(game_id)
@@ -298,6 +300,8 @@ class GameOrchestrator:
             logger.debug(f"Processed action from {action.agent_id}: {action.action_type}")
         else:
             logger.warning(f"Invalid action from {action.agent_id}: {error_msg}")
+            # Log invalid actions to the game log for analysis
+            self.storage.log_invalid_action(game_id, action, error_msg, game_state.round_number)
 
     def _get_active_agents(
         self,
@@ -351,6 +355,7 @@ class GameOrchestrator:
         )
 
         # Log comprehensive game completion
+        print(f"DEBUG: Orchestrator calling log_game_completed for {game_id}")
         self.storage.log_game_completed(game_state)
         self.storage.log_game_ended(game_id, game_state.winner, game_state.round_number)
 
