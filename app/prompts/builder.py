@@ -50,29 +50,54 @@ WHAT OTHERS HAVE SAID THIS ROUND
 ═══════════════════════════════════════════════════════════
 YOUR TURN TO SPEAK
 ═══════════════════════════════════════════════════════════
-This is your chance to influence the village. What will you say?
+This is your chance to speak to the village. What will you say?
 
-STRATEGIC OPTIONS:
-- Share observations about suspicious behavior
-- Accuse someone you believe is a werewolf
-- Defend yourself or someone else from accusations
-- Claim a role (if you're Seer/Doctor/etc. and want to reveal)
-- Reveal investigation results (if you're the Seer)
-- Ask questions to gather information
-- Create alliances or build trust
-
-Remember: Werewolves are listening. Choose your words carefully.
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC OPTIONS:
+# - Share observations about suspicious behavior
+# - Accuse someone you believe is a werewolf
+# - Defend yourself or someone else from accusations
+# - Claim a role (if you're Seer/Doctor/etc. and want to reveal)
+# - Reveal investigation results (if you're the Seer)
+# - Ask questions to gather information
+# - Create alliances or build trust
+#
+# Remember: Werewolves are listening. Choose your words carefully.
 
 Respond with your message to the village (keep it under 100 words):
 ACTION: discuss
-DISCUSSION_TYPE: [general_discussion|accuse|defend|claim_role|reveal_identity]
-TARGET: [agent_id if accusing/defending, otherwise none]
-CONTENT: [your message - be strategic and role-appropriate]
-REASONING: [why you're saying this - your strategic thinking]""",
+DISCUSSION_SUBACTIONS: [list of subactions, e.g., accuse, defend, general_discussion]
+DISCUSSION_TARGETS: [list of target lists, e.g., [[agent_1, agent_2], [agent_3]] means accuse both agent_1 and agent_2, defend agent_3]
+CONTENT: [your message]
+REASONING: [why you're saying this]
+
+⚠️ CRITICAL REQUIREMENT - TARGETS ARE MANDATORY FOR CERTAIN SUBACTIONS:
+
+SUBACTIONS THAT REQUIRE TARGETS (you MUST include agent_id):
+- "accuse" → MUST include at least one target (the agent you're accusing)
+- "defend" → MUST include at least one target (the agent you're defending)
+- "reveal_investigation" → MUST include target (the agent whose investigation you're revealing)
+- "reveal_protected" → MUST include target (the agent you protected)
+- "reveal_werewolf" → MUST include target (the werewolf you're revealing)
+
+SUBACTIONS THAT DON'T REQUIRE TARGETS:
+- "general_discussion" → no target needed
+- "reveal_identity" → no target needed (you're revealing yourself)
+- "claim_role" → no target needed (you're claiming your own role)
+- "last_words" → no target needed
+
+TARGET FORMAT REQUIREMENTS:
+- You MUST use the exact format: agent_X (e.g., agent_0, agent_1, agent_2, etc.)
+- The DISCUSSION_TARGETS list must match DISCUSSION_SUBACTIONS in length
+- Each subaction can have multiple targets: [[agent_1, agent_2], [agent_3]] means accuse both agent_1 AND agent_2, defend agent_3
+- If you mention someone in your CONTENT but don't include them in DISCUSSION_TARGETS for a target-required subaction, your action will be INVALID
+- Example: If you say "I think agent_1 is suspicious" but use "accuse" without including agent_1 in DISCUSSION_TARGETS, your accusation will be IGNORED
+
+VALIDATION: Your response will be rejected if you use a target-required subaction without providing the corresponding target(s).""",
 
         GamePhase.DAY_VOTING: """🗳️ VOTING TIME - ROUND {round} 🗳️
 
-Discussion is over. The village must now vote to eliminate someone. This is a critical decision - choose wisely.
+Discussion is over. The village must now vote to eliminate someone.
 
 ═══════════════════════════════════════════════════════════
 YOUR IDENTITY: {agent_id} ({role})
@@ -97,14 +122,15 @@ CURRENT VOTES
 ═══════════════════════════════════════════════════════════
 YOUR VOTE
 ═══════════════════════════════════════════════════════════
-You must vote to eliminate one player. This decision could save the village... or doom it.
+You must vote to eliminate one player.
 
-STRATEGIC CONSIDERATIONS:
-- Vote for the player you believe is most likely a werewolf
-- Consider voting patterns - are others coordinating?
-- Think about who would benefit from eliminating each player
-- Remember: Werewolves will vote together to eliminate villagers
-- If you're a werewolf, vote strategically to eliminate threats or create misdirection
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC CONSIDERATIONS:
+# - Vote for the player you believe is most likely a werewolf
+# - Consider voting patterns - are others coordinating?
+# - Think about who would benefit from eliminating each player
+# - Remember: Werewolves will vote together to eliminate villagers
+# - If you're a werewolf, vote strategically to eliminate threats or create misdirection
 
 Valid targets: {valid_targets}
 (You cannot vote for yourself)
@@ -112,7 +138,7 @@ Valid targets: {valid_targets}
 Respond with your vote:
 ACTION: vote
 TARGET: [agent_id to eliminate]
-REASONING: [why you're voting for this player - your strategic reasoning]""",
+REASONING: [why you're voting for this player]""",
 
         GamePhase.NIGHT_WEREWOLF: """🌙 NIGHT FALLS - WEREWOLF HUNT (Round {round}) 🌙
 
@@ -142,14 +168,15 @@ Eliminated Players: {eliminated_agents}
 ═══════════════════════════════════════════════════════════
 YOUR HUNT
 ═══════════════════════════════════════════════════════════
-Choose your target for tonight. This is a critical decision.
+Choose your target for tonight.
 
-STRATEGIC TARGETS TO CONSIDER:
-- The Seer (if you've identified them) - eliminate them before they reveal findings
-- The Doctor (if you've identified them) - they can protect others
-- Strong villagers who are organizing the village
-- Players who seem suspicious of you or your teammates
-- Create misdirection by targeting unexpected players
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC TARGETS TO CONSIDER:
+# - The Seer (if you've identified them) - eliminate them before they reveal findings
+# - The Doctor (if you've identified them) - they can protect others
+# - Strong villagers who are organizing the village
+# - Players who seem suspicious of you or your teammates
+# - Create misdirection by targeting unexpected players
 
 Valid targets: {valid_targets}
 (You cannot target fellow werewolves)
@@ -157,7 +184,7 @@ Valid targets: {valid_targets}
 Respond with your kill target:
 ACTION: kill
 TARGET: [agent_id to kill]
-REASONING: [why you're targeting this player - your strategic reasoning]""",
+REASONING: [why you're targeting this player]""",
 
         GamePhase.NIGHT_SEER: """🔮 NIGHT PHASE - SEER INVESTIGATION (Round {round}) 🔮
 
@@ -174,7 +201,6 @@ YOUR INVESTIGATION POWER
 ═══════════════════════════════════════════════════════════
 Each night, you can investigate one player to learn their true nature:
 - You will learn if they are a WEREWOLF or NOT a werewolf
-- Use this information wisely to help the village
 
 PREVIOUS INVESTIGATIONS:
 {investigation_results}
@@ -191,14 +217,15 @@ Eliminated Players: {eliminated_agents}
 ═══════════════════════════════════════════════════════════
 YOUR INVESTIGATION
 ═══════════════════════════════════════════════════════════
-Choose who to investigate tonight. This information could save the village.
+Choose who to investigate tonight.
 
-STRATEGIC CONSIDERATIONS:
-- Investigate players who seem suspicious or are acting strangely
-- Investigate players who are making strong accusations (could be werewolves deflecting)
-- Investigate players who are being quiet or avoiding discussion
-- Consider investigating players who others trust (verify their innocence)
-- Don't waste investigations on players you're already confident about
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC CONSIDERATIONS:
+# - Investigate players who seem suspicious or are acting strangely
+# - Investigate players who are making strong accusations (could be werewolves deflecting)
+# - Investigate players who are being quiet or avoiding discussion
+# - Consider investigating players who others trust (verify their innocence)
+# - Don't waste investigations on players you're already confident about
 
 Valid targets: {valid_targets}
 (You cannot investigate yourself)
@@ -206,7 +233,7 @@ Valid targets: {valid_targets}
 Respond with your investigation target:
 ACTION: investigate
 TARGET: [agent_id to investigate]
-REASONING: [why you're investigating this player - your strategic reasoning]""",
+REASONING: [why you're investigating this player]""",
 
         GamePhase.NIGHT_DOCTOR: """💊 NIGHT PHASE - DOCTOR PROTECTION (Round {round}) 💊
 
@@ -224,7 +251,7 @@ YOUR PROTECTION POWER
 Each night, you can protect one player from werewolf attacks.
 - If werewolves target the player you protect, they will survive
 - You can protect yourself
-- Use this power wisely - you can only protect one person per night
+- You can only protect one person per night
 
 ═══════════════════════════════════════════════════════════
 CURRENT SITUATION
@@ -238,22 +265,23 @@ Eliminated Players: {eliminated_agents}
 ═══════════════════════════════════════════════════════════
 YOUR PROTECTION
 ═══════════════════════════════════════════════════════════
-Choose who to protect tonight. Your choice could save a crucial player.
+Choose who to protect tonight.
 
-STRATEGIC CONSIDERATIONS:
-- Protect yourself if you're suspicious or revealed
-- Protect the Seer if they've revealed themselves
-- Protect players who are organizing the village
-- Protect players who seem like likely werewolf targets
-- Consider protecting suspicious players (they might be werewolves, but better safe than sorry)
-- Don't waste protection on players unlikely to be targeted
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC CONSIDERATIONS:
+# - Protect yourself if you're suspicious or revealed
+# - Protect the Seer if they've revealed themselves
+# - Protect players who are organizing the village
+# - Protect players who seem like likely werewolf targets
+# - Consider protecting suspicious players (they might be werewolves, but better safe than sorry)
+# - Don't waste protection on players unlikely to be targeted
 
 Valid targets: {valid_targets}
 
 Respond with your protection target:
 ACTION: protect
 TARGET: [agent_id to protect]
-REASONING: [why you're protecting this player - your strategic reasoning]""",
+REASONING: [why you're protecting this player]""",
 
         GamePhase.NIGHT_WITCH: """🧪 NIGHT PHASE - WITCH DECISION (Round {round}) 🧪
 
@@ -268,7 +296,7 @@ YOUR IDENTITY: {agent_id} - THE WITCH
 ═══════════════════════════════════════════════════════════
 YOUR POTIONS
 ═══════════════════════════════════════════════════════════
-You have TWO powerful potions, each usable only ONCE:
+You have TWO potions, each usable only ONCE:
 
 1. HEAL POTION: {heal_status}
    - Can save the player killed by werewolves tonight
@@ -294,14 +322,15 @@ Eliminated Players: {eliminated_agents}
 ═══════════════════════════════════════════════════════════
 YOUR DECISION
 ═══════════════════════════════════════════════════════════
-Decide whether to use a potion tonight. These are powerful but limited resources.
+Decide whether to use a potion tonight. Each potion can only be used once.
 
-STRATEGIC CONSIDERATIONS:
-- Use HEAL to save the Seer, Doctor, or other key players
-- Use POISON to eliminate confirmed werewolves or major threats
-- Save potions for critical moments - you only get one of each
-- Don't waste potions on uncertain situations
-- Consider: Is this the right time to act, or should you wait?
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC CONSIDERATIONS:
+# - Use HEAL to save the Seer, Doctor, or other key players
+# - Use POISON to eliminate confirmed werewolves or major threats
+# - Save potions for critical moments - you only get one of each
+# - Don't waste potions on uncertain situations
+# - Consider: Is this the right time to act, or should you wait?
 
 Your options:
 - heal [killed_player] - Save someone killed by werewolves (if heal available)
@@ -311,7 +340,7 @@ Your options:
 Respond with your decision:
 ACTION: [heal|poison|pass]
 TARGET: [agent_id or none]
-REASONING: [why you're making this decision - your strategic reasoning]""",
+REASONING: [why you're making this decision]""",
     }
     
     # Role-specific instructions with win conditions and strategic guidance
@@ -319,13 +348,14 @@ REASONING: [why you're making this decision - your strategic reasoning]""",
         AgentRole.VILLAGER: """YOUR ROLE: VILLAGER
 YOUR GOAL: Eliminate all werewolves before they eliminate the villagers.
 
-STRATEGIC GUIDANCE:
-- Pay close attention to everyone's behavior and statements
-- Look for inconsistencies, suspicious voting patterns, or unusual accusations
-- Trust the Seer if they reveal their identity and findings
-- Be cautious of false accusations - werewolves will try to frame innocent players
-- Build alliances with other villagers, but verify claims carefully
-- If you're eliminated, the village loses a valuable voice
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - Pay close attention to everyone's behavior and statements
+# - Look for inconsistencies, suspicious voting patterns, or unusual accusations
+# - Trust the Seer if they reveal their identity and findings
+# - Be cautious of false accusations - werewolves will try to frame innocent players
+# - Build alliances with other villagers, but verify claims carefully
+# - If you're eliminated, the village loses a valuable voice
 
 WHAT YOU KNOW:
 - You are innocent and want to protect the village
@@ -335,17 +365,18 @@ WHAT YOU KNOW:
         AgentRole.WEREWOLF: """YOUR ROLE: WEREWOLF
 YOUR GOAL: Eliminate enough villagers so that werewolves equal or outnumber them.
 
-STRATEGIC GUIDANCE:
-- You know your fellow werewolves: {werewolf_teammates}
-- Work together strategically, but NEVER reveal your teammates publicly
-- Blend in during discussions - act like a concerned villager
-- Deflect suspicion away from yourself and your teammates
-- Consider framing innocent players to create confusion
-- Vote strategically to eliminate threats (Seer, Doctor) or create misdirection
-- If villagers identify you, try to create doubt or shift blame
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - You know your fellow werewolves: {werewolf_teammates}
+# - Work together strategically, but NEVER reveal your teammates publicly
+# - Blend in during discussions - act like a concerned villager
+# - Deflect suspicion away from yourself and your teammates
+# - Consider framing innocent players to create confusion
+# - Vote strategically to eliminate threats (Seer, Doctor) or create misdirection
+# - If villagers identify you, try to create doubt or shift blame
 
 WHAT YOU KNOW:
-- Your werewolf teammates (work together but secretly)
+- Your werewolf teammates: {werewolf_teammates} (work together but secretly)
 - Who the villagers are (your targets)
 - You must eliminate villagers without being discovered
 - If you're caught, you're eliminated and your team loses a member""",
@@ -353,69 +384,70 @@ WHAT YOU KNOW:
         AgentRole.SEER: """YOUR ROLE: SEER
 YOUR GOAL: Use your investigation power to identify werewolves and help the village eliminate them.
 
-STRATEGIC GUIDANCE:
-- Each night you can investigate one player to learn if they're a werewolf
-- Use your investigations wisely - you're a prime target for werewolves
-- Consider revealing your identity strategically, but beware of counter-claims
-- Share your findings carefully - werewolves may try to discredit you
-- Protect yourself - if werewolves know you're the Seer, they'll target you
-- Build trust with confirmed villagers through your investigations
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - Each night you can investigate one player to learn if they're a werewolf
+# - Use your investigations wisely - you're a prime target for werewolves
+# - Consider revealing your identity strategically, but beware of counter-claims
+# - Share your findings carefully - werewolves may try to discredit you
+# - Protect yourself - if werewolves know you're the Seer, they'll target you
+# - Build trust with confirmed villagers through your investigations
 
 WHAT YOU KNOW:
+- Each night you can investigate one player to learn if they're a werewolf
 - Your investigation results (see below)
-- Werewolves will try to eliminate you if they discover your role
-- The village needs your information, but revealing too early can be dangerous
-- You're one of the most powerful roles - use it strategically""",
+- Werewolves will try to eliminate you if they discover your role""",
 
         AgentRole.DOCTOR: """YOUR ROLE: DOCTOR
 YOUR GOAL: Protect key players from werewolf attacks and help the village identify threats.
 
-STRATEGIC GUIDANCE:
-- Each night you can protect one player from being killed
-- Protect yourself early if you're suspicious, or protect likely targets (Seer, other key roles)
-- Don't reveal your role unless necessary - werewolves will target you
-- Consider protecting players who seem suspicious - they might be werewolves trying to frame others
-- Your protection is powerful but limited - use it strategically
-- Work with the Seer if they reveal themselves - protect them!
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - Each night you can protect one player from being killed
+# - Protect yourself early if you're suspicious, or protect likely targets (Seer, other key roles)
+# - Don't reveal your role unless necessary - werewolves will target you
+# - Consider protecting players who seem suspicious - they might be werewolves trying to frame others
+# - Your protection is powerful but limited - use it strategically
+# - Work with the Seer if they reveal themselves - protect them!
 
 WHAT YOU KNOW:
-- You can save one player per night from werewolf attacks
-- Werewolves will target you if they discover your role
-- The village needs you alive to protect key players
-- Your protection is crucial for the village's survival""",
+- Each night you can protect one player from werewolf attacks
+- If werewolves target the player you protect, they will survive
+- You can protect yourself
+- Werewolves will target you if they discover your role""",
 
         AgentRole.WITCH: """YOUR ROLE: WITCH
-YOUR GOAL: Use your potions strategically to help the village eliminate werewolves.
+YOUR GOAL: Use your potions to help the village eliminate werewolves.
 
-STRATEGIC GUIDANCE:
-- You have TWO potions: one heal (save a killed player) and one poison (kill any player)
-- Use your heal potion wisely - you can only use it once
-- Use your poison potion to eliminate confirmed werewolves or suspicious players
-- Don't reveal your role unless necessary - werewolves will target you
-- Consider saving the Seer or Doctor if they're killed
-- Your potions are powerful but limited - use them strategically
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - You have TWO potions: one heal (save a killed player) and one poison (kill any player)
+# - Use your heal potion wisely - you can only use it once
+# - Use your poison potion to eliminate confirmed werewolves or suspicious players
+# - Don't reveal your role unless necessary - werewolves will target you
+# - Consider saving the Seer or Doctor if they're killed
+# - Your potions are powerful but limited - use them strategically
 
 WHAT YOU KNOW:
-- Heal potion: {heal_status} (can save the werewolf victim tonight)
-- Poison potion: {poison_status} (can eliminate any player)
-- Werewolves will target you if they discover your role
-- Your potions can turn the tide of the game""",
+- You have TWO potions, each usable only ONCE:
+  1. HEAL POTION: {heal_status} (can save the player killed by werewolves tonight)
+  2. POISON POTION: {poison_status} (can eliminate any player)
+- Werewolves will target you if they discover your role""",
 
         AgentRole.HUNTER: """YOUR ROLE: HUNTER
 YOUR GOAL: Help identify werewolves. If eliminated, you can take one player with you.
 
-STRATEGIC GUIDANCE:
-- You're a powerful role - werewolves will be cautious about eliminating you
-- Use your threat to deter werewolves from targeting you
-- If you're eliminated, you MUST shoot someone - choose wisely
-- Consider shooting confirmed werewolves or highly suspicious players
-- Your shot is your final act - make it count for the village
+# BASELINE VERSION: Strategic guidance removed - only rules provided
+# STRATEGIC GUIDANCE:
+# - You're a powerful role - werewolves will be cautious about eliminating you
+# - Use your threat to deter werewolves from targeting you
+# - If you're eliminated, you MUST shoot someone - choose wisely
+# - Consider shooting confirmed werewolves or highly suspicious players
+# - Your shot is your final act - make it count for the village
 
 WHAT YOU KNOW:
 - If eliminated, you can shoot one player (they die immediately)
-- Werewolves may avoid eliminating you due to your threat
-- Your shot can eliminate a werewolf or save the village
-- Use your role to protect the village even in death""",
+- You must shoot someone if you are eliminated""",
     }
 
     @staticmethod
@@ -423,7 +455,8 @@ WHAT YOU KNOW:
         game_state: GameState,
         agent: AgentProfile,
         discussion_context: List[Dict[str, Any]] = None,
-        storage=None
+        storage=None,
+        is_last_words: bool = False
     ) -> str:
         """
         Build a complete prompt for an agent based on game state and role.
@@ -499,12 +532,15 @@ WHAT YOU KNOW:
             variables["poison_status"] = "N/A"
         
         # Build role instruction (with dynamic formatting for werewolf)
-        role_instruction_template = PromptBuilder.ROLE_INSTRUCTIONS.get(role, "Play strategically.")
+        role_instruction_template = PromptBuilder.ROLE_INSTRUCTIONS.get(role, "Follow the rules of the game.")
         try:
             variables["role_instruction"] = role_instruction_template.format(**variables)
         except KeyError:
             # If formatting fails, use template as-is
             variables["role_instruction"] = role_instruction_template
+        
+        # BASELINE VERSION: Remove strategic language from reasoning prompts
+        # Replace "strategic" with neutral language in response format instructions
         
         # Valid targets (exclude self and role-specific exclusions)
         valid_targets = PromptBuilder._get_valid_targets(game_state, agent)

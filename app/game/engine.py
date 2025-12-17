@@ -179,6 +179,15 @@ class GameEngine:
             protected_agent = self._get_doctor_protection(doctor_actions)
             if protected_agent:
                 logger.info(f"Agent {protected_agent} protected by doctor")
+                # If doctor protected the killed agent, they survive
+                if game_state.killed_this_night == protected_agent:
+                    game_state.killed_this_night = None
+            
+            # Finalize night eliminations: if someone was killed and not healed/protected, eliminate them
+            if game_state.killed_this_night and game_state.killed_this_night in game_state.alive_agent_ids:
+                self.state_manager.eliminate_agent(game_state, game_state.killed_this_night)
+                eliminated.append(game_state.killed_this_night)
+                logger.info(f"Agent {game_state.killed_this_night} eliminated after night (not healed/protected)")
 
         # Process hunter elimination (happens after any elimination)
         if eliminated and game_state.hunter_eliminated:

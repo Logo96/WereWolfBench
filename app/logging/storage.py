@@ -46,16 +46,23 @@ logger = logging.getLogger(__name__)
 class GameLogger:
     """Handles game data storage with both in-memory cache and file persistence."""
 
-    def __init__(self, log_dir: str = "game_logs", subfolder: str = "baseline"):
+    def __init__(self, log_dir: str = "game_logs", subfolder: str = "baseline", game_name: str = None):
         """
         Initialize the game logger.
         
         Args:
             log_dir: Base directory for logs (default: "game_logs")
             subfolder: Subfolder to use ("baseline" or "optimized", default: "baseline")
+            game_name: Custom name for log files (if None, uses game_id)
         """
         self.log_dir = Path(log_dir) / subfolder
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get custom game name from environment variable if not provided
+        if game_name is None:
+            import os
+            game_name = os.getenv("GAME_NAME", "")
+        self.game_name = game_name if game_name else None
 
         self.active_games: Dict[str, GameState] = {}
         self.game_agents: Dict[str, List[AgentProfile]] = {}
@@ -142,8 +149,14 @@ class GameLogger:
         }
         
         # Add discussion sub-action information
-        if action.action_type.value == "discuss" and action.discussion_action_type:
-            event_data["discussion_action_type"] = action.discussion_action_type.value
+        if action.action_type.value == "discuss":
+            # Support new format with multiple subactions and targets
+            if action.discussion_subactions:
+                event_data["discussion_subactions"] = [s.value for s in action.discussion_subactions]
+                event_data["discussion_targets"] = action.discussion_targets  # List[List[str]]
+            # Backward compatibility: single subaction
+            elif action.discussion_action_type:
+                event_data["discussion_action_type"] = action.discussion_action_type.value
             event_data["discussion_content"] = action.discussion_content
             if action.claimed_role:
                 event_data["claimed_role"] = action.claimed_role
@@ -370,17 +383,21 @@ class GameLogger:
 
     def _write_game_event(self, game_id: str, event: Dict[str, Any]) -> None:
         """Write an event to the game's log file."""
-        log_file = self.log_dir / f"game_{game_id}.jsonl"
+        # Use custom name if set, otherwise use game_id
+        file_name = self.game_name if self.game_name else game_id
+        log_file = self.log_dir / f"game_{file_name}.jsonl"
 
         try:
-            with open(log_file, "a") as f:
-                f.write(json.dumps(event) + "\n")
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.error(f"Failed to write event to log file: {e}")
 
     def load_game_from_log(self, game_id: str) -> Optional[Dict[str, Any]]:
         """Load a game's history from its log file."""
-        log_file = self.log_dir / f"game_{game_id}.jsonl"
+        # Use custom name if set, otherwise use game_id
+        file_name = self.game_name if self.game_name else game_id
+        log_file = self.log_dir / f"game_{file_name}.jsonl"
 
         if not log_file.exists():
             return None

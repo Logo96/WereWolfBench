@@ -19,7 +19,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.types.agent import (
     WerewolfAction, AgentProfile, AgentResponse,
-    AgentRole, ActionType
+    AgentRole, ActionType, DiscussionActionType
 )
 from app.types.game import GameState, GamePhase, GameConfig, GameStatus
 from app.game.engine import GameEngine
@@ -161,6 +161,17 @@ class GameOrchestrator:
                         f"Game {game_id}: {old_phase.value} -> {game_state.phase.value}"
                     )
 
+                    # Handle last words for agents eliminated at night
+                    night_eliminated = []
+                    if old_phase in [GamePhase.NIGHT_WEREWOLF, GamePhase.NIGHT_WITCH, GamePhase.NIGHT_DOCTOR]:
+                        night_eliminated = eliminated.copy()
+                    
+                    if night_eliminated:
+                        logger.info(f"Game {game_id}: {len(night_eliminated)} agents eliminated at night - requesting last words")
+                        # Re-fetch agents to get latest status after eliminations
+                        agents = self.storage.get_agents(game_id)
+                        await self._handle_last_words(game_id, game_state, night_eliminated, agents)
+
                     for agent_id in eliminated:
                         logger.info(f"Game {game_id}: Agent {agent_id} eliminated")
 
@@ -173,6 +184,10 @@ class GameOrchestrator:
 
                 await asyncio.sleep(1)
 
+        except asyncio.CancelledError:
+            # Normal cancellation (e.g., Ctrl+C) - don't mark game as cancelled
+            logger.info(f"Game loop for {game_id} was cancelled (normal interruption)")
+            raise  # Re-raise to allow proper cleanup
         except Exception as e:
             logger.error(f"Error in game loop for {game_id}: {e}")
             import traceback
@@ -249,13 +264,22 @@ class GameOrchestrator:
         # Clear context for new discussion round
         self.discussion_context[game_id] = []
         
-        # Randomize speaking order to make it fair
-        speaking_order = agents.copy()
-        random.shuffle(speaking_order)
+        # Use fixed order (sorted by agent_id) for consistency
+        # This ensures agents always speak in the same order each round
+        speaking_order = sorted(agents, key=lambda a: a.agent_id)
         
-        logger.info(f"Discussion order: {[a.agent_id for a in speaking_order]}")
+        logger.info(f"Discussion order (fixed): {[a.agent_id for a in speaking_order]}")
+        
+        # Track which agents have already spoken to enforce one chance per agent
+        agents_spoken = set()
         
         for agent in speaking_order:
+            # Enforce one chance to speak per agent per discussion round
+            if agent.agent_id in agents_spoken:
+                logger.warning(f"Agent {agent.agent_id} attempted to speak multiple times - skipping")
+                continue
+            
+            agents_spoken.add(agent.agent_id)
             try:
                 # Get current discussion context (what previous agents said)
                 current_context = self.discussion_context[game_id].copy()
@@ -277,6 +301,69 @@ class GameOrchestrator:
                     
             except Exception as e:
                 logger.error(f"Error in sequential discussion from {agent.agent_id}: {e}")
+                self._handle_agent_error(game_id, agent.agent_id, str(e))
+
+    async def _handle_last_words(
+        self,
+        game_id: str,
+        game_state: GameState,
+        eliminated_agents: List[str],
+        all_agents: List[AgentProfile]
+    ):
+        """
+        Handle last words for agents eliminated at night.
+        They speak first, before day discussion, and can only speak once.
+        They can use multiple discussion subactions in their last words.
+        """
+        if not eliminated_agents:
+            return
+        
+        # Get agent profiles for eliminated agents
+        eliminated_profiles = [
+            agent for agent in all_agents
+            if agent.agent_id in eliminated_agents
+        ]
+        
+        if not eliminated_profiles:
+            return
+        
+        logger.info(f"Requesting last words from {len(eliminated_profiles)} eliminated agents")
+        
+        # Track who has given last words to ensure they only speak once
+        agents_given_last_words = set()
+        
+        # Process last words sequentially (they speak first, before day discussion)
+        for agent in eliminated_profiles:
+            if agent.agent_id in agents_given_last_words:
+                logger.warning(f"Agent {agent.agent_id} attempted to give last words multiple times - skipping")
+                continue
+            
+            try:
+                # Request last words action
+                action = await self._request_agent_action(
+                    game_id, agent, game_state,
+                    is_last_words=True  # Signal that this is last words
+                )
+                
+                if action and action.action_type == ActionType.DISCUSS:
+                    # Ensure last_words subaction is included
+                    subactions = action.get_discussion_subactions()
+                    if DiscussionActionType.LAST_WORDS not in subactions:
+                        # Add last_words as the first subaction if not present
+                        if action.discussion_subactions is None:
+                            action.discussion_subactions = []
+                        action.discussion_subactions.insert(0, DiscussionActionType.LAST_WORDS)
+                    
+                    # Log the last words
+                    self.storage.log_action(game_id, action)
+                    agents_given_last_words.add(agent.agent_id)
+                    
+                    logger.info(f"Agent {agent.agent_id} gave last words with {len(action.get_discussion_subactions())} subactions")
+                else:
+                    logger.warning(f"Agent {agent.agent_id} did not provide valid last words discussion action")
+                    
+            except Exception as e:
+                logger.error(f"Error getting last words from {agent.agent_id}: {e}")
                 self._handle_agent_error(game_id, agent.agent_id, str(e))
 
     async def _run_werewolf_phase(
@@ -345,7 +432,8 @@ class GameOrchestrator:
         agent: AgentProfile,
         game_state: GameState,
         discussion_context: List[Dict[str, Any]] = None,
-        is_decision_maker: bool = False
+        is_decision_maker: bool = False,
+        is_last_words: bool = False
     ) -> Optional[WerewolfAction]:
         """Request an action from a white agent via A2A SDK with enhanced prompt."""
         
@@ -354,12 +442,22 @@ class GameOrchestrator:
             game_state=game_state,
             agent=agent,
             discussion_context=discussion_context,
-            storage=self.storage
+            storage=self.storage,
+            is_last_words=is_last_words
         )
         
         # Add decision maker context for werewolves
         if is_decision_maker and game_state.phase == GamePhase.NIGHT_WEREWOLF:
             prompt += "\n\nYou are the DECISION MAKER for the werewolves tonight. Your choice will be final."
+        
+        # Add last words context
+        if is_last_words:
+            prompt += "\n\n⚠️ IMPORTANT: You have been ELIMINATED at night. This is your LAST WORDS - you can only speak once. "
+            prompt += "You may use multiple discussion subactions (e.g., defend someone AND accuse someone else). "
+            prompt += "After this, you will never speak again.\n\n"
+            prompt += "⚠️ CRITICAL: If you accuse or defend anyone, you MUST include their exact agent_id in DISCUSSION_TARGETS. "
+            prompt += "If you mention someone in your message but don't include them in DISCUSSION_TARGETS, your action will be invalid."
+            # BASELINE VERSION: No strategic guidance - only stating the rule
         
         # Get visible state (for backwards compatibility)
         visible_state = self.engine.get_agent_view(game_state, agent.agent_id, self.storage)
@@ -376,6 +474,7 @@ class GameOrchestrator:
             "prompt": prompt,  # Full constructed prompt
             "game_state": visible_state,
             "your_role": agent.role.value,
+            "your_agent_id": agent.agent_id,  # Pass agent_id so White Agent can include it in response
             "phase": game_state.phase.value,
             "round": game_state.round_number,
             "alive_agents": game_state.alive_agent_ids,
@@ -739,7 +838,9 @@ class GameOrchestrator:
             from extract_game_metrics import extract_game_metrics
             import os
             
-            game_log_path = f"game_logs/baseline/game_{game_id}.jsonl"
+            # Use custom name if available from storage, otherwise use game_id
+            file_name = self.storage.game_name if hasattr(self.storage, 'game_name') and self.storage.game_name else game_id
+            game_log_path = f"game_logs/baseline/game_{file_name}.jsonl"
             if os.path.exists(game_log_path):
                 logger.info(f"Calculating metrics for game {game_id}")
                 metrics = extract_game_metrics(game_log_path)

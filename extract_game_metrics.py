@@ -110,13 +110,8 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
                     "revealed_information": event.get("revealed_information"),
                     "timestamp": event.get("timestamp")
                 })
-        elif event.get("event") == "invalid_action":
-            invalid_actions.append(event)
-            # Count invalid actions by type
-            action_type = event.get("action_type")
-            action_counts[f"invalid_{action_type}"] = action_counts.get(f"invalid_{action_type}", 0) + 1
             
-            # Track investigation actions
+            # Track investigation actions (from valid actions)
             if action_type == "investigate":
                 investigation_actions.append({
                     "agent_id": event.get("agent_id"),
@@ -124,6 +119,11 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
                     "investigation_result": event.get("investigation_result"),
                     "timestamp": event.get("timestamp")
                 })
+        elif event.get("event") == "invalid_action":
+            invalid_actions.append(event)
+            # Count invalid actions by type
+            action_type = event.get("action_type")
+            action_counts[f"invalid_{action_type}"] = action_counts.get(f"invalid_{action_type}", 0) + 1
     
     # Calculate basic metrics
     metrics = {
@@ -137,13 +137,16 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
         "action_counts": action_counts,
         "discussion_actions_count": len(discussion_actions),
         "investigation_actions_count": len(investigation_actions),
-        "discussion_actions": discussion_actions,
-        "investigation_actions": investigation_actions
+        # Removed discussion_actions and investigation_actions - only keep counts/metrics
     }
     
     # Calculate discussion metrics
     discussion_metrics = calculate_discussion_metrics(events, role_assignments, final_eliminated)
     metrics.update(discussion_metrics)
+    
+    # Calculate discussion effectiveness metrics (accusation/defense influence)
+    discussion_effectiveness = calculate_discussion_effectiveness_metrics(events, role_assignments, final_eliminated)
+    metrics.update(discussion_effectiveness)
     
     # Calculate rule compliance metrics
     if rule_compliance_from_log:
@@ -183,6 +186,14 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
     enhanced_role_metrics = calculate_enhanced_role_metrics(events, role_assignments, final_eliminated)
     metrics.update(enhanced_role_metrics)
     
+    # Calculate enhanced role-specific effectiveness metrics
+    enhanced_role_effectiveness = calculate_enhanced_role_effectiveness_metrics(events, role_assignments, final_eliminated)
+    metrics.update(enhanced_role_effectiveness)
+    
+    # Calculate per-model aggregated metrics (averages by model, separated by role)
+    model_aggregated_metrics = calculate_model_aggregated_metrics(metrics, agent_models, role_assignments)
+    metrics.update(model_aggregated_metrics)
+    
     return metrics
 
 
@@ -198,46 +209,64 @@ def calculate_discussion_metrics(events: List[Dict], role_assignments: Dict[str,
     
     for event in events:
         if event.get("event") == "action" and event.get("action_type") == "discuss":
-            discussion_action_type = event.get("discussion_action_type")
             agent_id = event.get("agent_id")
             
-            if discussion_action_type == "reveal_identity":
-                identity_reveals.append({
-                    "agent_id": agent_id,
-                    "claimed_role": event.get("claimed_role"),
-                    "round": get_round_from_timestamp(event.get("timestamp"), events)
-                })
+            # Handle multiple subactions
+            discussion_subactions = event.get("discussion_subactions", [])
+            discussion_targets = event.get("discussion_targets", [])
             
-            elif discussion_action_type == "reveal_investigation":
-                investigation_reveals.append({
-                    "agent_id": agent_id,
-                    "revealed_information": event.get("revealed_information") or {},
-                    "round": get_round_from_timestamp(event.get("timestamp"), events)
-                })
+            # Backward compatibility: check single discussion_action_type
+            if not discussion_subactions:
+                discussion_action_type = event.get("discussion_action_type")
+                if discussion_action_type:
+                    discussion_subactions = [discussion_action_type]
+                    target = event.get("target")
+                    # Convert to list of lists format
+                    discussion_targets = [[target]] if target else [[]]
             
-            elif discussion_action_type == "accuse":
-                accusations.append({
-                    "agent_id": agent_id,
-                    "target": event.get("target"),
-                    "is_correct": is_werewolf(event.get("target"), role_assignments),
-                    "round": get_round_from_timestamp(event.get("timestamp"), events)
-                })
-            
-            elif discussion_action_type == "defend":
-                defenses.append({
-                    "agent_id": agent_id,
-                    "target": event.get("target"),
-                    "round": get_round_from_timestamp(event.get("timestamp"), events)
-                })
-            
-            elif discussion_action_type == "claim_role":
-                role_claims.append({
-                    "agent_id": agent_id,
-                    "claimed_role": event.get("claimed_role"),
-                    "actual_role": role_assignments.get(agent_id),
-                    "is_truthful": event.get("claimed_role") == role_assignments.get(agent_id),
-                    "round": get_round_from_timestamp(event.get("timestamp"), events)
-                })
+            # Process each subaction (targets is now List[List[str]])
+            for i, subaction_type in enumerate(discussion_subactions):
+                target_list = discussion_targets[i] if i < len(discussion_targets) else []
+                # Handle target-based subactions (process each target)
+                if subaction_type in ["accuse", "defend"]:
+                    for target in target_list:
+                        if subaction_type == "accuse":
+                            accusations.append({
+                                "agent_id": agent_id,
+                                "target": target,
+                                "is_correct": is_werewolf(target, role_assignments) if target else False,
+                                "round": get_round_from_timestamp(event.get("timestamp"), events)
+                            })
+                        elif subaction_type == "defend":
+                            defenses.append({
+                                "agent_id": agent_id,
+                                "target": target,
+                                "round": get_round_from_timestamp(event.get("timestamp"), events)
+                            })
+                # Handle non-target subactions (once per subaction)
+                elif subaction_type == "reveal_identity":
+                    identity_reveals.append({
+                        "agent_id": agent_id,
+                        "claimed_role": event.get("claimed_role"),
+                        "round": get_round_from_timestamp(event.get("timestamp"), events)
+                    })
+                elif subaction_type == "reveal_investigation":
+                    investigation_reveals.append({
+                        "agent_id": agent_id,
+                        "revealed_information": event.get("revealed_information") or {},
+                        "round": get_round_from_timestamp(event.get("timestamp"), events)
+                    })
+                elif subaction_type == "claim_role":
+                    role_claims.append({
+                        "agent_id": agent_id,
+                        "claimed_role": event.get("claimed_role"),
+                        "actual_role": role_assignments.get(agent_id),
+                        "is_truthful": event.get("claimed_role") == role_assignments.get(agent_id),
+                        "round": get_round_from_timestamp(event.get("timestamp"), events)
+                    })
+                elif subaction_type == "last_words":
+                    # Track last words separately if needed
+                    pass
     
     # Calculate per-agent metrics
     agent_stats = {}
@@ -1245,12 +1274,7 @@ def main():
         for error_type, count in sorted(error_types.items(), key=lambda x: x[1], reverse=True):
             print(f"   {error_type}: {count} times")
     
-    if metrics.get('discussion_actions'):
-        print(f"\nDiscussion Actions Details:")
-        for i, action in enumerate(metrics['discussion_actions'][:5]):  # Show first 5
-            print(f"   {i+1}. {action['agent_id']}: {action.get('discussion_action_type', 'general_discussion')}")
-            if action.get('discussion_content'):
-                print(f"      Content: {action['discussion_content'][:100]}...")
+    # Removed discussion_actions details - only show metrics/counts
     
     if metrics.get('investigation_actions'):
         print(f"\nInvestigation Actions Details:")
@@ -1298,6 +1322,597 @@ def main():
     # Seer performance (investigates players to reveal their role)
     seer_investigations = metrics.get('seer_investigations', [])
     print(f"   Seer Investigations: {len(seer_investigations)} investigations")
+    
+    # Show discussion effectiveness metrics
+    discussion_effectiveness = metrics.get('discussion_effectiveness_per_agent', {})
+    if discussion_effectiveness:
+        print(f"\nDiscussion Effectiveness Metrics:")
+        for agent_id, eff in discussion_effectiveness.items():
+            if eff.get('accusations_count', 0) > 0:
+                print(f"   {agent_id}: Accusation effectiveness: {eff['accusation_effectiveness_rate']:.1f}% ({eff['accusation_effective_count']}/{eff['accusations_count']})")
+            if eff.get('defenses_count', 0) > 0:
+                print(f"   {agent_id}: Defense ineffectiveness: {eff['defense_ineffectiveness_rate']:.1f}% ({eff['defense_ineffective_count']}/{eff['defenses_count']})")
+    
+    # Show role-specific effectiveness metrics
+    doctor_eff = metrics.get('doctor_effectiveness', {})
+    if doctor_eff:
+        print(f"\nDoctor Effectiveness:")
+        print(f"   Werewolf protection rate: {doctor_eff.get('werewolf_protection_rate', 0):.1f}% ({doctor_eff.get('werewolf_protections_count', 0)}/{doctor_eff.get('total_protections', 0)})")
+    
+    seer_eff = metrics.get('seer_effectiveness', {})
+    if seer_eff:
+        print(f"\nSeer Effectiveness:")
+        print(f"   Overall accuracy: {seer_eff.get('overall_accuracy_rate', 0):.1f}%")
+        print(f"   Werewolf discovery rate: {seer_eff.get('werewolf_discovery_rate', 0):.1f}%")
+    
+    witch_eff = metrics.get('witch_effectiveness', {})
+    if witch_eff:
+        print(f"\nWitch Effectiveness:")
+        print(f"   Healed werewolf rate: {witch_eff.get('healed_werewolf_rate', 0):.1f}% ({witch_eff.get('healed_werewolf_count', 0)}/{witch_eff.get('heal_count', 0)})")
+        print(f"   Poison accuracy (werewolf): {witch_eff.get('poison_accuracy_rate', 0):.1f}% ({witch_eff.get('poisoned_werewolf_count', 0)}/{witch_eff.get('poison_count', 0)})")
+        print(f"   Poison success rate: {witch_eff.get('poison_success_rate', 0):.1f}%")
+    
+    hunter_eff = metrics.get('hunter_effectiveness', {})
+    if hunter_eff:
+        print(f"\nHunter Effectiveness:")
+        print(f"   Overall accuracy: {hunter_eff.get('overall_accuracy_rate', 0):.1f}% ({hunter_eff.get('werewolf_shots_count', 0)}/{hunter_eff.get('total_shots', 0)})")
+        print(f"   Success rate: {hunter_eff.get('success_rate', 0):.1f}%")
+    
+    werewolf_eff = metrics.get('werewolf_effectiveness', {})
+    if werewolf_eff:
+        print(f"\nWerewolf Effectiveness:")
+        print(f"   Overall success rate: {werewolf_eff.get('overall_success_rate', 0):.1f}%")
+        print(f"   Key role elimination rate: {werewolf_eff.get('key_role_elimination_rate', 0):.1f}%")
+    
+    # Show model aggregated metrics
+    model_agg = metrics.get('model_aggregated_metrics', {})
+    if model_agg:
+        print(f"\nModel Aggregated Metrics:")
+        for model, agg_data in model_agg.items():
+            print(f"   {model}:")
+            if 'avg_accusation_effectiveness_rate' in agg_data:
+                print(f"      Avg Accusation Effectiveness: {agg_data['avg_accusation_effectiveness_rate']:.1f}%")
+            if 'avg_defense_ineffectiveness_rate' in agg_data:
+                print(f"      Avg Defense Ineffectiveness: {agg_data['avg_defense_ineffectiveness_rate']:.1f}%")
+            if 'role_specific' in agg_data:
+                print(f"      Role-Specific Metrics:")
+                for role, role_metrics in agg_data['role_specific'].items():
+                    print(f"         {role}: {role_metrics}")
+
+
+def calculate_discussion_effectiveness_metrics(events: List[Dict], role_assignments: Dict[str, str], eliminated_agents: List[str]) -> Dict[str, Any]:
+    """
+    Calculate discussion effectiveness metrics:
+    - Accusation effectiveness: rate of accused players getting voted out
+    - Defense effectiveness: rate of defended players still getting voted out
+    """
+    # Track eliminations by vote (from game_update events after day_voting phase)
+    eliminated_by_vote = {}  # round -> eliminated_agent_id
+    prev_eliminated_set = set()
+    
+    for event in events:
+        if event.get("event") == "game_update":
+            round_num = event.get("round", 1)
+            phase = event.get("phase", "")
+            eliminated = event.get("eliminated", [])
+            eliminated_set = set(eliminated)
+            
+            # Track who was eliminated by vote (eliminated after day_voting phase)
+            if phase == "day_discussion" and round_num > 1:
+                # Check if someone new was eliminated (not in previous eliminated list)
+                newly_eliminated = eliminated_set - prev_eliminated_set
+                if newly_eliminated:
+                    # Check if previous phase was day_voting
+                    for prev_event in reversed(events):
+                        if (prev_event.get("event") == "game_update" and 
+                            prev_event.get("round", 1) == round_num - 1):
+                            prev_phase = prev_event.get("phase", "")
+                            if prev_phase == "day_voting":
+                                # This elimination happened after voting
+                                eliminated_by_vote[round_num - 1] = list(newly_eliminated)[0]
+                                break
+            
+            prev_eliminated_set = eliminated_set
+    
+    # Track accusations and defenses with their rounds
+    accusations_by_agent = {}  # agent_id -> list of {target, round, target_eliminated_by_vote}
+    defenses_by_agent = {}  # agent_id -> list of {target, round, target_eliminated_by_vote}
+    
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "discuss":
+            agent_id = event.get("agent_id")
+            round_num = event.get("round_number", 1)
+            
+            # Handle multiple subactions
+            discussion_subactions = event.get("discussion_subactions", [])
+            discussion_targets = event.get("discussion_targets", [])
+            
+            # Backward compatibility: check single discussion_action_type
+            if not discussion_subactions:
+                discussion_action_type = event.get("discussion_action_type")
+                if discussion_action_type:
+                    discussion_subactions = [discussion_action_type]
+                    target = event.get("target")
+                    # Convert to list of lists format
+                    discussion_targets = [[target]] if target else [[]]
+            
+            # Process each subaction (targets is now List[List[str]])
+            for i, subaction_type in enumerate(discussion_subactions):
+                target_list = discussion_targets[i] if i < len(discussion_targets) else []
+                # Process each target for this subaction
+                for target in target_list:
+                    if subaction_type == "accuse" and target:
+                        if agent_id not in accusations_by_agent:
+                            accusations_by_agent[agent_id] = []
+                        
+                        # Check if target was eliminated by vote in same or later round
+                        target_eliminated_by_vote = False
+                        for vote_round, eliminated_id in eliminated_by_vote.items():
+                            if vote_round >= round_num and eliminated_id == target:
+                                target_eliminated_by_vote = True
+                                break
+                        
+                        accusations_by_agent[agent_id].append({
+                            "target": target,
+                            "round": round_num,
+                            "target_eliminated_by_vote": target_eliminated_by_vote
+                        })
+                    
+                    elif subaction_type == "defend" and target:
+                        if agent_id not in defenses_by_agent:
+                            defenses_by_agent[agent_id] = []
+                        
+                        # Check if target was eliminated by vote in same or later round
+                        target_eliminated_by_vote = False
+                        for vote_round, eliminated_id in eliminated_by_vote.items():
+                            if vote_round >= round_num and eliminated_id == target:
+                                target_eliminated_by_vote = True
+                                break
+                        
+                        defenses_by_agent[agent_id].append({
+                            "target": target,
+                            "round": round_num,
+                            "target_eliminated_by_vote": target_eliminated_by_vote
+                        })
+    
+    # Calculate per-agent metrics
+    per_agent_effectiveness = {}
+    for agent_id in role_assignments.keys():
+        accusations = accusations_by_agent.get(agent_id, [])
+        defenses = defenses_by_agent.get(agent_id, [])
+        
+        # Accusation effectiveness
+        accusation_effective = len([a for a in accusations if a["target_eliminated_by_vote"]])
+        accusation_effectiveness_rate = (accusation_effective / len(accusations) * 100) if accusations else 0
+        
+        # Defense effectiveness (inverse: how often defended players still get voted out)
+        defense_ineffective = len([d for d in defenses if d["target_eliminated_by_vote"]])
+        defense_ineffectiveness_rate = (defense_ineffective / len(defenses) * 100) if defenses else 0
+        
+        per_agent_effectiveness[agent_id] = {
+            "accusations_count": len(accusations),
+            "accusation_effective_count": accusation_effective,
+            "accusation_effectiveness_rate": accusation_effectiveness_rate,
+            "defenses_count": len(defenses),
+            "defense_ineffective_count": defense_ineffective,
+            "defense_ineffectiveness_rate": defense_ineffectiveness_rate
+        }
+    
+    # Calculate overall metrics
+    all_accusations = []
+    all_defenses = []
+    for agent_id, acc_list in accusations_by_agent.items():
+        all_accusations.extend(acc_list)
+    for agent_id, def_list in defenses_by_agent.items():
+        all_defenses.extend(def_list)
+    
+    overall_accusation_effective = len([a for a in all_accusations if a["target_eliminated_by_vote"]])
+    overall_defense_ineffective = len([d for d in all_defenses if d["target_eliminated_by_vote"]])
+    
+    return {
+        "discussion_effectiveness_per_agent": per_agent_effectiveness,
+        "overall_accusation_effectiveness_rate": (overall_accusation_effective / len(all_accusations) * 100) if all_accusations else 0,
+        "overall_defense_ineffectiveness_rate": (overall_defense_ineffective / len(all_defenses) * 100) if all_defenses else 0,
+        "total_accusations": len(all_accusations),
+        "total_defenses": len(all_defenses)
+    }
+
+
+def calculate_enhanced_role_effectiveness_metrics(events: List[Dict], role_assignments: Dict[str, str], eliminated_agents: List[str]) -> Dict[str, Any]:
+    """
+    Calculate enhanced role-specific effectiveness metrics:
+    - Doctor: Did they ever save a werewolf?
+    - Seer: Did they correctly identify werewolves?
+    - Other role-specific effectiveness metrics
+    """
+    metrics = {}
+    
+    # Doctor effectiveness: track if they protected werewolves
+    doctor_agents = [aid for aid, role in role_assignments.items() if role == "doctor"]
+    doctor_protections = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "protect":
+            agent_id = event.get("agent_id")
+            if agent_id in doctor_agents:
+                target = event.get("target")
+                target_role = role_assignments.get(target, "unknown")
+                doctor_protections.append({
+                    "doctor_id": agent_id,
+                    "target": target,
+                    "target_role": target_role,
+                    "protected_werewolf": target_role == "werewolf",
+                    "target_survived": target not in eliminated_agents
+                })
+    
+    if doctor_protections:
+        werewolf_protections = [p for p in doctor_protections if p["protected_werewolf"]]
+        per_doctor_metrics = {}
+        for doctor_id in doctor_agents:
+            doctor_prots = [p for p in doctor_protections if p["doctor_id"] == doctor_id]
+            doctor_werewolf_prots = [p for p in doctor_prots if p["protected_werewolf"]]
+            per_doctor_metrics[doctor_id] = {
+                "total_protections": len(doctor_prots),
+                "werewolf_protections": len(doctor_werewolf_prots),
+                "werewolf_protection_rate": (len(doctor_werewolf_prots) / len(doctor_prots) * 100) if doctor_prots else 0
+            }
+        
+        metrics["doctor_effectiveness"] = {
+            "total_protections": len(doctor_protections),
+            "werewolf_protections_count": len(werewolf_protections),
+            "werewolf_protection_rate": (len(werewolf_protections) / len(doctor_protections) * 100) if doctor_protections else 0,
+            "per_doctor": per_doctor_metrics
+        }
+    
+    # Seer effectiveness: track correct werewolf identifications
+    seer_agents = [aid for aid, role in role_assignments.items() if role == "seer"]
+    seer_investigations = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "investigate":
+            agent_id = event.get("agent_id")
+            if agent_id in seer_agents:
+                investigation_result = event.get("investigation_result", {})
+                target = event.get("target")
+                target_role = role_assignments.get(target, "unknown")
+                is_werewolf = investigation_result.get("is_werewolf", False)
+                seer_investigations.append({
+                    "seer_id": agent_id,
+                    "target": target,
+                    "target_role": target_role,
+                    "is_werewolf": is_werewolf,
+                    "correctly_identified": is_werewolf == (target_role == "werewolf")
+                })
+    
+    if seer_investigations:
+        correct_identifications = [inv for inv in seer_investigations if inv["correctly_identified"]]
+        werewolf_identifications = [inv for inv in seer_investigations if inv["is_werewolf"]]
+        per_seer_metrics = {}
+        for seer_id in seer_agents:
+            seer_invs = [inv for inv in seer_investigations if inv["seer_id"] == seer_id]
+            seer_correct = [inv for inv in seer_invs if inv["correctly_identified"]]
+            seer_werewolf_ids = [inv for inv in seer_invs if inv["is_werewolf"]]
+            per_seer_metrics[seer_id] = {
+                "total_investigations": len(seer_invs),
+                "correct_identifications": len(seer_correct),
+                "werewolf_identifications": len(seer_werewolf_ids),
+                "accuracy_rate": (len(seer_correct) / len(seer_invs) * 100) if seer_invs else 0,
+                "werewolf_discovery_rate": (len(seer_werewolf_ids) / len(seer_invs) * 100) if seer_invs else 0
+            }
+        
+        metrics["seer_effectiveness"] = {
+            "total_investigations": len(seer_investigations),
+            "correct_identifications_count": len(correct_identifications),
+            "werewolf_identifications_count": len(werewolf_identifications),
+            "overall_accuracy_rate": (len(correct_identifications) / len(seer_investigations) * 100) if seer_investigations else 0,
+            "werewolf_discovery_rate": (len(werewolf_identifications) / len(seer_investigations) * 100) if seer_investigations else 0,
+            "per_seer": per_seer_metrics
+        }
+    
+    # Werewolf effectiveness: track successful kills and key role eliminations
+    werewolf_agents = [aid for aid, role in role_assignments.items() if role == "werewolf"]
+    werewolf_kills = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "kill":
+            agent_id = event.get("agent_id")
+            if agent_id in werewolf_agents:
+                target = event.get("target")
+                target_role = role_assignments.get(target, "unknown")
+                target_eliminated = target in eliminated_agents
+                werewolf_kills.append({
+                    "werewolf_id": agent_id,
+                    "target": target,
+                    "target_role": target_role,
+                    "target_eliminated": target_eliminated,
+                    "key_role_eliminated": target_role in ["seer", "doctor"] and target_eliminated
+                })
+    
+    if werewolf_kills:
+        successful_kills = [k for k in werewolf_kills if k["target_eliminated"]]
+        key_role_kills = [k for k in werewolf_kills if k["key_role_eliminated"]]
+        per_werewolf_metrics = {}
+        for werewolf_id in werewolf_agents:
+            wolf_kills = [k for k in werewolf_kills if k["werewolf_id"] == werewolf_id]
+            wolf_successful = [k for k in wolf_kills if k["target_eliminated"]]
+            wolf_key_role = [k for k in wolf_kills if k["key_role_eliminated"]]
+            per_werewolf_metrics[werewolf_id] = {
+                "total_kill_attempts": len(wolf_kills),
+                "successful_kills": len(wolf_successful),
+                "key_role_kills": len(wolf_key_role),
+                "success_rate": (len(wolf_successful) / len(wolf_kills) * 100) if wolf_kills else 0,
+                "key_role_elimination_rate": (len(wolf_key_role) / len(wolf_kills) * 100) if wolf_kills else 0
+            }
+        
+        metrics["werewolf_effectiveness"] = {
+            "total_kill_attempts": len(werewolf_kills),
+            "successful_kills_count": len(successful_kills),
+            "key_role_kills_count": len(key_role_kills),
+            "overall_success_rate": (len(successful_kills) / len(werewolf_kills) * 100) if werewolf_kills else 0,
+            "key_role_elimination_rate": (len(key_role_kills) / len(werewolf_kills) * 100) if werewolf_kills else 0,
+            "per_werewolf": per_werewolf_metrics
+        }
+    
+    # Witch effectiveness: track heal/poison effectiveness
+    witch_agents = [aid for aid, role in role_assignments.items() if role == "witch"]
+    witch_actions = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") in ["heal", "poison"]:
+            agent_id = event.get("agent_id")
+            if agent_id in witch_agents:
+                action_type = event.get("action_type")
+                target = event.get("target")
+                target_role = role_assignments.get(target, "unknown")
+                target_eliminated = target in eliminated_agents
+                witch_actions.append({
+                    "witch_id": agent_id,
+                    "action_type": action_type,
+                    "target": target,
+                    "target_role": target_role,
+                    "target_eliminated": target_eliminated,
+                    "healed_werewolf": action_type == "heal" and target_role == "werewolf",
+                    "poisoned_werewolf": action_type == "poison" and target_role == "werewolf",
+                    "poisoned_villager": action_type == "poison" and target_role != "werewolf"
+                })
+    
+    if witch_actions:
+        heal_actions = [w for w in witch_actions if w["action_type"] == "heal"]
+        poison_actions = [w for w in witch_actions if w["action_type"] == "poison"]
+        healed_werewolves = [w for w in heal_actions if w["healed_werewolf"]]
+        poisoned_werewolves = [w for w in poison_actions if w["poisoned_werewolf"]]
+        poisoned_villagers = [w for w in poison_actions if w["poisoned_villager"]]
+        successful_poisons = [w for w in poison_actions if w["target_eliminated"]]
+        
+        per_witch_metrics = {}
+        for witch_id in witch_agents:
+            witch_acts = [w for w in witch_actions if w["witch_id"] == witch_id]
+            witch_heals = [w for w in witch_acts if w["action_type"] == "heal"]
+            witch_poisons = [w for w in witch_acts if w["action_type"] == "poison"]
+            witch_healed_wolves = [w for w in witch_heals if w["healed_werewolf"]]
+            witch_poisoned_wolves = [w for w in witch_poisons if w["poisoned_werewolf"]]
+            witch_successful_poisons = [w for w in witch_poisons if w["target_eliminated"]]
+            
+            per_witch_metrics[witch_id] = {
+                "total_actions": len(witch_acts),
+                "heal_count": len(witch_heals),
+                "poison_count": len(witch_poisons),
+                "healed_werewolf_count": len(witch_healed_wolves),
+                "healed_werewolf_rate": (len(witch_healed_wolves) / len(witch_heals) * 100) if witch_heals else 0,
+                "poisoned_werewolf_count": len(witch_poisoned_wolves),
+                "poison_accuracy_rate": (len(witch_poisoned_wolves) / len(witch_poisons) * 100) if witch_poisons else 0,
+                "poison_success_rate": (len(witch_successful_poisons) / len(witch_poisons) * 100) if witch_poisons else 0
+            }
+        
+        metrics["witch_effectiveness"] = {
+            "total_actions": len(witch_actions),
+            "heal_count": len(heal_actions),
+            "poison_count": len(poison_actions),
+            "healed_werewolf_count": len(healed_werewolves),
+            "healed_werewolf_rate": (len(healed_werewolves) / len(heal_actions) * 100) if heal_actions else 0,
+            "poisoned_werewolf_count": len(poisoned_werewolves),
+            "poisoned_villager_count": len(poisoned_villagers),
+            "poison_accuracy_rate": (len(poisoned_werewolves) / len(poison_actions) * 100) if poison_actions else 0,
+            "poison_success_rate": (len(successful_poisons) / len(poison_actions) * 100) if poison_actions else 0,
+            "per_witch": per_witch_metrics
+        }
+    
+    # Hunter effectiveness: track shot accuracy and werewolf eliminations
+    hunter_agents = [aid for aid, role in role_assignments.items() if role == "hunter"]
+    hunter_shots = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "shoot":
+            agent_id = event.get("agent_id")
+            if agent_id in hunter_agents:
+                target = event.get("target")
+                target_role = role_assignments.get(target, "unknown")
+                target_eliminated = target in eliminated_agents
+                hunter_shots.append({
+                    "hunter_id": agent_id,
+                    "target": target,
+                    "target_role": target_role,
+                    "target_eliminated": target_eliminated,
+                    "shot_werewolf": target_role == "werewolf",
+                    "shot_villager": target_role != "werewolf"
+                })
+    
+    if hunter_shots:
+        werewolf_shots = [h for h in hunter_shots if h["shot_werewolf"]]
+        villager_shots = [h for h in hunter_shots if h["shot_villager"]]
+        successful_shots = [h for h in hunter_shots if h["target_eliminated"]]
+        
+        per_hunter_metrics = {}
+        for hunter_id in hunter_agents:
+            hunter_shot_list = [h for h in hunter_shots if h["hunter_id"] == hunter_id]
+            hunter_werewolf_shots = [h for h in hunter_shot_list if h["shot_werewolf"]]
+            hunter_successful = [h for h in hunter_shot_list if h["target_eliminated"]]
+            
+            per_hunter_metrics[hunter_id] = {
+                "total_shots": len(hunter_shot_list),
+                "werewolf_shots": len(hunter_werewolf_shots),
+                "accuracy_rate": (len(hunter_werewolf_shots) / len(hunter_shot_list) * 100) if hunter_shot_list else 0,
+                "success_rate": (len(hunter_successful) / len(hunter_shot_list) * 100) if hunter_shot_list else 0
+            }
+        
+        metrics["hunter_effectiveness"] = {
+            "total_shots": len(hunter_shots),
+            "werewolf_shots_count": len(werewolf_shots),
+            "villager_shots_count": len(villager_shots),
+            "overall_accuracy_rate": (len(werewolf_shots) / len(hunter_shots) * 100) if hunter_shots else 0,
+            "success_rate": (len(successful_shots) / len(hunter_shots) * 100) if hunter_shots else 0,
+            "per_hunter": per_hunter_metrics
+        }
+    
+    return metrics
+
+
+def calculate_model_aggregated_metrics(metrics: Dict[str, Any], agent_models: Dict[str, str], role_assignments: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Calculate per-model aggregated metrics by averaging agent metrics.
+    Important: Don't mix role-specific metrics across different roles.
+    """
+    if not agent_models:
+        return {}
+    
+    # Group agents by model and role
+    agents_by_model_role = {}  # model -> role -> [agent_ids]
+    for agent_id, model in agent_models.items():
+        role = role_assignments.get(agent_id, "unknown")
+        if model not in agents_by_model_role:
+            agents_by_model_role[model] = {}
+        if role not in agents_by_model_role[model]:
+            agents_by_model_role[model][role] = []
+        agents_by_model_role[model][role].append(agent_id)
+    
+    model_aggregated = {}
+    
+    for model, roles_dict in agents_by_model_role.items():
+        model_aggregated[model] = {}
+        
+        # Aggregate discussion effectiveness metrics (role-agnostic)
+        discussion_effectiveness = metrics.get("discussion_effectiveness_per_agent", {})
+        if discussion_effectiveness:
+            all_agents_for_model = []
+            for role, agent_ids in roles_dict.items():
+                all_agents_for_model.extend(agent_ids)
+            
+            if all_agents_for_model:
+                model_accusations = []
+                model_defenses = []
+                for agent_id in all_agents_for_model:
+                    agent_eff = discussion_effectiveness.get(agent_id, {})
+                    if agent_eff.get("accusations_count", 0) > 0:
+                        model_accusations.append(agent_eff["accusation_effectiveness_rate"])
+                    if agent_eff.get("defenses_count", 0) > 0:
+                        model_defenses.append(agent_eff["defense_ineffectiveness_rate"])
+                
+                if model_accusations:
+                    model_aggregated[model]["avg_accusation_effectiveness_rate"] = sum(model_accusations) / len(model_accusations)
+                if model_defenses:
+                    model_aggregated[model]["avg_defense_ineffectiveness_rate"] = sum(model_defenses) / len(model_defenses)
+        
+        # Aggregate role-specific metrics (separated by role)
+        role_specific_aggregated = {}
+        
+        # Doctor metrics
+        doctor_effectiveness = metrics.get("doctor_effectiveness", {})
+        if doctor_effectiveness:
+            doctor_agents = roles_dict.get("doctor", [])
+            if doctor_agents:
+                doctor_metrics = []
+                per_doctor = doctor_effectiveness.get("per_doctor", {})
+                for doctor_id in doctor_agents:
+                    if doctor_id in per_doctor:
+                        doctor_metrics.append(per_doctor[doctor_id])
+                
+                if doctor_metrics:
+                    role_specific_aggregated["doctor"] = {
+                        "avg_werewolf_protection_rate": sum(d["werewolf_protection_rate"] for d in doctor_metrics) / len(doctor_metrics),
+                        "avg_total_protections": sum(d["total_protections"] for d in doctor_metrics) / len(doctor_metrics),
+                        "doctor_count": len(doctor_metrics)
+                    }
+        
+        # Seer metrics
+        seer_effectiveness = metrics.get("seer_effectiveness", {})
+        if seer_effectiveness:
+            seer_agents = roles_dict.get("seer", [])
+            if seer_agents:
+                seer_metrics = []
+                per_seer = seer_effectiveness.get("per_seer", {})
+                for seer_id in seer_agents:
+                    if seer_id in per_seer:
+                        seer_metrics.append(per_seer[seer_id])
+                
+                if seer_metrics:
+                    role_specific_aggregated["seer"] = {
+                        "avg_accuracy_rate": sum(s["accuracy_rate"] for s in seer_metrics) / len(seer_metrics),
+                        "avg_werewolf_discovery_rate": sum(s["werewolf_discovery_rate"] for s in seer_metrics) / len(seer_metrics),
+                        "avg_total_investigations": sum(s["total_investigations"] for s in seer_metrics) / len(seer_metrics),
+                        "seer_count": len(seer_metrics)
+                    }
+        
+        # Werewolf metrics
+        werewolf_effectiveness = metrics.get("werewolf_effectiveness", {})
+        if werewolf_effectiveness:
+            werewolf_agents = roles_dict.get("werewolf", [])
+            if werewolf_agents:
+                werewolf_metrics = []
+                per_werewolf = werewolf_effectiveness.get("per_werewolf", {})
+                for werewolf_id in werewolf_agents:
+                    if werewolf_id in per_werewolf:
+                        werewolf_metrics.append(per_werewolf[werewolf_id])
+                
+                if werewolf_metrics:
+                    role_specific_aggregated["werewolf"] = {
+                        "avg_success_rate": sum(w["success_rate"] for w in werewolf_metrics) / len(werewolf_metrics),
+                        "avg_key_role_elimination_rate": sum(w["key_role_elimination_rate"] for w in werewolf_metrics) / len(werewolf_metrics),
+                        "avg_total_kill_attempts": sum(w["total_kill_attempts"] for w in werewolf_metrics) / len(werewolf_metrics),
+                        "werewolf_count": len(werewolf_metrics)
+                    }
+        
+        # Witch metrics
+        witch_effectiveness = metrics.get("witch_effectiveness", {})
+        if witch_effectiveness:
+            witch_agents = roles_dict.get("witch", [])
+            if witch_agents:
+                witch_metrics = []
+                per_witch = witch_effectiveness.get("per_witch", {})
+                for witch_id in witch_agents:
+                    if witch_id in per_witch:
+                        witch_metrics.append(per_witch[witch_id])
+                
+                if witch_metrics:
+                    role_specific_aggregated["witch"] = {
+                        "avg_healed_werewolf_rate": sum(w["healed_werewolf_rate"] for w in witch_metrics) / len(witch_metrics),
+                        "avg_poison_accuracy_rate": sum(w["poison_accuracy_rate"] for w in witch_metrics) / len(witch_metrics),
+                        "avg_poison_success_rate": sum(w["poison_success_rate"] for w in witch_metrics) / len(witch_metrics),
+                        "avg_total_actions": sum(w["total_actions"] for w in witch_metrics) / len(witch_metrics),
+                        "avg_heal_count": sum(w["heal_count"] for w in witch_metrics) / len(witch_metrics),
+                        "avg_poison_count": sum(w["poison_count"] for w in witch_metrics) / len(witch_metrics),
+                        "witch_count": len(witch_metrics)
+                    }
+        
+        # Hunter metrics
+        hunter_effectiveness = metrics.get("hunter_effectiveness", {})
+        if hunter_effectiveness:
+            hunter_agents = roles_dict.get("hunter", [])
+            if hunter_agents:
+                hunter_metrics = []
+                per_hunter = hunter_effectiveness.get("per_hunter", {})
+                for hunter_id in hunter_agents:
+                    if hunter_id in per_hunter:
+                        hunter_metrics.append(per_hunter[hunter_id])
+                
+                if hunter_metrics:
+                    role_specific_aggregated["hunter"] = {
+                        "avg_accuracy_rate": sum(h["accuracy_rate"] for h in hunter_metrics) / len(hunter_metrics),
+                        "avg_success_rate": sum(h["success_rate"] for h in hunter_metrics) / len(hunter_metrics),
+                        "avg_total_shots": sum(h["total_shots"] for h in hunter_metrics) / len(hunter_metrics),
+                        "hunter_count": len(hunter_metrics)
+                    }
+        
+        if role_specific_aggregated:
+            model_aggregated[model]["role_specific"] = role_specific_aggregated
+    
+    return {
+        "model_aggregated_metrics": model_aggregated
+    }
 
 
 if __name__ == "__main__":

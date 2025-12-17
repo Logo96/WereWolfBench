@@ -68,17 +68,23 @@ class AgentProcess:
         print(f"  {self.name} started (PID: {self.process.pid})")
     
     def read_output(self) -> tuple[str, str]:
-        """Read captured stdout and stderr."""
+        """Read captured stdout and stderr (only if process has terminated)."""
         stdout, stderr = "", ""
-        if self.process and self.process.stdout:
+        if self.process:
+            # Check if process is still running
+            if self.process.poll() is None:
+                # Process is still running - can't read output without blocking
+                # Return empty strings to avoid hanging
+                return "", ""
+            
+            # Process has terminated - safe to read output
             try:
-                stdout = self.process.stdout.read()
-            except:
-                pass
-        if self.process and self.process.stderr:
-            try:
-                stderr = self.process.stderr.read()
-            except:
+                if self.process.stdout:
+                    stdout = self.process.stdout.read()
+                if self.process.stderr:
+                    stderr = self.process.stderr.read()
+            except Exception:
+                # Output already read or pipe closed
                 pass
         return stdout, stderr
     
@@ -187,8 +193,8 @@ def save_metrics(game_id: str, metrics: dict, output_dir: str = "metrics", subfo
     
     metrics_file = output_path / f"game_{game_id}_metrics.json"
     
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
+    with open(metrics_file, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
     
     print(f"\n💾 Metrics saved to: {metrics_file}")
     return metrics_file
@@ -212,6 +218,7 @@ async def run_full_game(args: argparse.Namespace):
             env={
                 "HOST": "0.0.0.0",
                 "PORT": str(GREEN_AGENT_PORT),
+                "GAME_NAME": args.name if args.name else "",
             }
         )
         green_agent.start(show_output=args.show_green_output)
@@ -221,36 +228,38 @@ async def run_full_game(args: argparse.Namespace):
         # Wait a bit for Green Agent to start
         await asyncio.sleep(2)
         
-        # 2. Start 8 Real White Agents (4 GPT-5.2 + 4 GPT-5-mini)
+        # 2. Start 8 Real White Agents (all using Gemini 2.5 Flash)
         print("\n" + "=" * 70)
         print("Starting 8 Real White Agents (LLM-powered)")
         print("=" * 70)
-        print("  - 4 agents using GPT-5.2")
-        print("  - 4 agents using GPT-5-mini")
         
-        if not os.getenv("OPENAI_API_KEY"):
-            print("\n⚠️  WARNING: OPENAI_API_KEY not set!")
+        if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+            print("\n⚠️  WARNING: GEMINI_API_KEY or GOOGLE_API_KEY not set!")
             print("   White Agents will use fallback responses (no real LLM calls)")
-            print("   Set OPENAI_API_KEY to use real LLM:\n")
-            print("   export OPENAI_API_KEY='your-key-here'\n")
+            print("   Set GEMINI_API_KEY to use real LLM:\n")
+            print("   export GEMINI_API_KEY='your-key-here'\n")
+            print("   Or use: export GOOGLE_API_KEY='your-key-here'\n")
         
-        # Model assignments: first 4 use GPT-5.2, last 4 use GPT-5-mini
-        GPT_5_2_MODEL = "gpt-5.2"
-        GPT_5_MINI_MODEL = "gpt-5-mini"
+        # Model assignments: all agents use the model specified in LLM_MODEL env var, or default to Gemini 2.5 Flash
+        # You can override by setting: export LLM_MODEL="gemini/gemini-1.5-flash" (or any other model)
+        GEMINI_MODEL = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
         
-        for i in range(8):
+        for i in range(9):
             port = WHITE_AGENT_START_PORT + i
-            # First 4 agents (0-3) use GPT-5.2, last 4 (4-7) use GPT-5-mini
-            model = GPT_5_2_MODEL if i < 4 else GPT_5_MINI_MODEL
+            # All agents use the model specified in GEMINI_MODEL
+            model = GEMINI_MODEL
             agent_name = f"White Agent {i+1} ({model})"
             
+            # Pass both GEMINI_API_KEY and GOOGLE_API_KEY for compatibility
+            gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
             white_agent = AgentProcess(
                 name=agent_name,
                 command=[sys.executable, "-m", "white_agent.main"],
                 env={
                     "HOST": "0.0.0.0",
                     "PORT": str(port),
-                    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
+                    "GEMINI_API_KEY": gemini_key,
+                    "GOOGLE_API_KEY": gemini_key,  # Also set for LiteLLM compatibility
                     "LLM_MODEL": model,
                 }
             )
@@ -277,8 +286,8 @@ async def run_full_game(args: argparse.Namespace):
             "num_werewolves": 2,
             "has_seer": True,
             "has_doctor": True,
-            "has_hunter": False,
-            "has_witch": False,
+            "has_hunter": True,
+            "has_witch": True,
             "max_rounds": None,  # No limit - game runs until werewolves or villagers win
             "discussion_time_limit": 300,
             "voting_time_limit": 60,
@@ -286,15 +295,14 @@ async def run_full_game(args: argparse.Namespace):
         
         async with httpx.AsyncClient() as client:
             print(f"Starting game with {len(agent_urls)} real White Agents...")
-            print(f"  - Agents 1-4: GPT-5.2")
-            print(f"  - Agents 5-8: GPT-5-mini")
+            print(f"  - All agents: Gemini 2.5 Flash")
             print(f"\nConfig: {json.dumps(game_config, indent=2)}")
             print(f"\n✓ No max_rounds limit - game will run to natural completion\n")
             
             # Create model mapping for tracking
             agent_models = {}
             for i, url in enumerate(agent_urls):
-                model = GPT_5_2_MODEL if i < 4 else GPT_5_MINI_MODEL
+                model = GEMINI_MODEL
                 agent_models[url] = model
             
             try:
@@ -373,7 +381,9 @@ async def run_full_game(args: argparse.Namespace):
                     print("Extracting Metrics")
                     print("=" * 70)
                     
-                    log_file = Path(f"game_logs/baseline/game_{game_id}.jsonl")
+                    # Use custom name if provided, otherwise use game_id
+                    log_name = args.name if args.name else game_id
+                    log_file = Path(f"game_logs/baseline/game_{log_name}.jsonl")
                     if log_file.exists():
                         print(f"📋 Game log: {log_file}")
                         
@@ -381,8 +391,9 @@ async def run_full_game(args: argparse.Namespace):
                             from extract_game_metrics import extract_game_metrics
                             metrics = extract_game_metrics(str(log_file))
                             
-                            # Save metrics to file
-                            metrics_file = save_metrics(game_id, metrics, args.metrics_dir)
+                            # Save metrics to file (use custom name if provided)
+                            metrics_name = args.name if args.name else game_id
+                            metrics_file = save_metrics(metrics_name, metrics, args.metrics_dir)
                             
                             # Print summary
                             print("\n" + "=" * 70)
@@ -401,22 +412,15 @@ async def run_full_game(args: argparse.Namespace):
                             print(f"  Valid Actions: {metrics.get('valid_actions', 0)}/{metrics.get('total_actions', 0)}")
                             
                             # Show White Agent logs if not already shown
+                            # Note: We skip reading output here since processes are still running
+                            # Output will be lost, but prevents blocking. Use --show-agent-output for real-time logs.
                             if not args.show_agent_output:
                                 print("\n" + "=" * 70)
-                                print("White Agent Logs (from captured output)")
+                                print("White Agent Logs")
                                 print("=" * 70)
+                                print("(Output not captured - processes still running)")
                                 print("(Run with --show-agent-output to see logs in real-time)")
-                                for agent in processes:
-                                    if "White Agent" in agent.name:
-                                        stdout, stderr = agent.read_output()
-                                        if stdout or stderr:
-                                            print(f"\n--- {agent.name} ---")
-                                            if stdout:
-                                                print("STDOUT:")
-                                                print(stdout[-2000:] if len(stdout) > 2000 else stdout)  # Last 2000 chars
-                                            if stderr:
-                                                print("STDERR:")
-                                                print(stderr[-2000:] if len(stderr) > 2000 else stderr)
+                                print("(Check individual agent logs in their respective log files)")
                             
                         except Exception as e:
                             print(f"\n⚠️  Failed to extract metrics: {e}")
@@ -448,7 +452,7 @@ def main():
         "--llm-model",
         type=str,
         default=None,
-        help="[DEPRECATED] Model assignment is now fixed: 4 GPT-5.2 + 4 GPT-5-mini"
+        help="[DEPRECATED] Model assignment is now fixed: all agents use Gemini 2.5 Flash"
     )
     parser.add_argument(
         "--poll-interval",
@@ -471,6 +475,12 @@ def main():
         type=str,
         default="metrics",
         help="Base directory to save metrics JSON files (default: metrics, saves to metrics/baseline/)"
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Custom name for log and metrics files (e.g., 'test1' creates game_test1.jsonl and game_test1_metrics.json)"
     )
     
     args = parser.parse_args()

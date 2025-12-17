@@ -38,7 +38,7 @@ llm_handler: Optional[LLMHandler] = None
 def init_globals():
     """Initialize global LLM handler."""
     global llm_handler
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
     llm_handler = LLMHandler(model=model)
     logger.info(f"Initialized White Agent with LLM model: {model}")
 
@@ -108,11 +108,16 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         game_id = task_data.get("game_id")
         game_state = task_data.get("game_state", {})
         your_role = task_data.get("your_role")
+        your_agent_id = task_data.get("your_agent_id", "")  # Get agent_id from task_data
         phase = task_data.get("phase")
         round_number = task_data.get("round", 1)
         alive_agents = task_data.get("alive_agents", [])
         eliminated_agents = task_data.get("eliminated_agents", [])
         prompt = task_data.get("prompt", "")  # Full prompt from Green Agent
+        
+        # Add agent_id to game_state so ResponseFormatter can use it
+        if your_agent_id:
+            game_state["your_agent_id"] = your_agent_id
         
         # Log input for debugging
         logger.info(f"Received task for game {game_id}, phase {phase}, role {your_role}")
@@ -135,8 +140,14 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         # Check if fallback was used
         is_fallback = llm_response.startswith("[FALLBACK]")
         if is_fallback:
+            model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
+            is_gemini = model.startswith("gemini/") or "gemini" in model.lower()
+            if is_gemini:
+                api_key_name = "GEMINI_API_KEY or GOOGLE_API_KEY"
+            else:
+                api_key_name = "OPENAI_API_KEY"
             logger.warning(f"⚠️  FALLBACK response used (LLM unavailable) - response time: {response_time:.2f}ms")
-            logger.warning("   Check: 1) LiteLLM installed? 2) OPENAI_API_KEY set? 3) Model name valid?")
+            logger.warning(f"   Check: 1) LiteLLM installed? 2) {api_key_name} set? 3) Model name valid?")
             logger.warning(f"   Fallback response: {llm_response[:300]}...")
         else:
             logger.info(f"✅ REAL LLM response received in {response_time:.2f}ms")

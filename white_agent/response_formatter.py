@@ -37,6 +37,7 @@ class ResponseFormatter:
         "defend": "defend",
         "claim_role": "claim_role",
         "reveal_werewolf": "reveal_werewolf",
+        "last_words": "last_words",
     }
     
     @staticmethod
@@ -92,8 +93,10 @@ class ResponseFormatter:
             reasoning = reasoning[:197] + "..."
         
         # Build the action payload
+        # Get agent_id from game_state if available, otherwise empty (orchestrator will set it)
+        agent_id = game_state.get("your_agent_id", "")
         action = {
-            "agent_id": game_state.get("your_agent_id", ""),  # Will be set by orchestrator
+            "agent_id": agent_id,
             "action_type": action_type,
             "target_agent_id": target,
             "reasoning": reasoning,
@@ -166,10 +169,36 @@ class ResponseFormatter:
         if content_match:
             parsed["discussion_content"] = content_match.group(1).strip()
         
-        # Extract discussion type
+        # Extract discussion type (backward compatibility)
         disc_type_match = re.search(r'DISCUSSION_TYPE:\s*(\w+)', response, re.IGNORECASE)
         if disc_type_match:
             parsed["discussion_type"] = disc_type_match.group(1).lower()
+        
+        # Extract multiple discussion subactions
+        subactions_match = re.search(r'DISCUSSION_SUBACTIONS:\s*\[(.*?)\]', response, re.IGNORECASE)
+        if subactions_match:
+            subactions_str = subactions_match.group(1)
+            parsed["discussion_subactions"] = [s.strip().lower() for s in subactions_str.split(',') if s.strip()]
+        
+        # Extract multiple discussion targets (can be list of lists)
+        targets_match = re.search(r'DISCUSSION_TARGETS:\s*\[(.*?)\]', response, re.IGNORECASE | re.DOTALL)
+        if targets_match:
+            targets_str = targets_match.group(1)
+            # Try to parse as nested lists: [[agent1, agent2], [agent3]]
+            # First try to match nested brackets
+            nested_match = re.findall(r'\[([^\]]*)\]', targets_str)
+            if nested_match:
+                # Found nested lists
+                parsed["discussion_targets"] = [
+                    [t.strip() for t in group.split(',') if t.strip() and t.strip().lower() not in ['none', 'n/a', '-', '']]
+                    for group in nested_match
+                ]
+            else:
+                # Fallback: single list format
+                parsed["discussion_targets"] = [
+                    [t.strip()] if t.strip() and t.strip().lower() not in ['none', 'n/a', '-', ''] else []
+                    for t in targets_str.split(',')
+                ]
             
         return parsed
     
@@ -212,6 +241,26 @@ class ResponseFormatter:
             return f"agent_{player_match.group(1)}"
             
         return None
+    
+    @staticmethod
+    def _extract_all_targets_from_text(text: str) -> List[str]:
+        """Extract all target agents from free-form text."""
+        targets = []
+        # Find all agent_X patterns
+        agent_matches = re.findall(r'agent[_\s]?(\d+)', text, re.IGNORECASE)
+        for match in agent_matches:
+            agent_id = f"agent_{match}"
+            if agent_id not in targets:
+                targets.append(agent_id)
+        
+        # Also look for "Player X" patterns
+        player_matches = re.findall(r'player[_\s]?(\d+)', text, re.IGNORECASE)
+        for match in player_matches:
+            agent_id = f"agent_{match}"
+            if agent_id not in targets:
+                targets.append(agent_id)
+        
+        return targets
     
     @staticmethod
     def _get_valid_action_type(
@@ -339,23 +388,135 @@ class ResponseFormatter:
         role: str,
         game_state: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Format discussion-specific action fields."""
+        """Format discussion-specific action fields, supporting multiple subactions."""
         fields = {}
         
-        # Get discussion type
-        disc_type = parsed.get("discussion_type", "general_discussion")
-        canonical_type = ResponseFormatter.DISCUSSION_TYPES.get(disc_type, "general_discussion")
-        fields["discussion_action_type"] = canonical_type
+        # Support multiple discussion subactions
+        discussion_subactions = parsed.get("discussion_subactions", [])
+        discussion_targets = parsed.get("discussion_targets", [])
+        
+        # If single discussion_type provided (backward compatibility)
+        if not discussion_subactions:
+            disc_type = parsed.get("discussion_type", "general_discussion")
+            discussion_subactions = [disc_type]
+            if parsed.get("target"):
+                discussion_targets = [[parsed.get("target")]]  # Wrap in list of lists
+            else:
+                discussion_targets = [[]]
+        
+        # Parse multiple subactions from text if not explicitly provided
+        if len(discussion_subactions) == 1 and discussion_subactions[0] == "general_discussion":
+            # Try to extract multiple subactions from reasoning/content
+            content = parsed.get("discussion_content") or parsed.get("reasoning", "")
+            extracted_subactions = ResponseFormatter._extract_multiple_subactions(content)
+            if extracted_subactions:
+                discussion_subactions = extracted_subactions
+                # Extract targets for each subaction (returns List[List[str]])
+                discussion_targets = ResponseFormatter._extract_targets_for_subactions(content, discussion_subactions)
+        
+        # Convert to canonical types
+        canonical_types = []
+        for disc_type in discussion_subactions:
+            canonical = ResponseFormatter.DISCUSSION_TYPES.get(disc_type.lower(), "general_discussion")
+            canonical_types.append(canonical)
+        
+        # Ensure discussion_targets is a list of lists
+        if not discussion_targets:
+            discussion_targets = [[] for _ in canonical_types]
+        else:
+            # Convert to list of lists format
+            formatted_targets = []
+            for i, targets in enumerate(discussion_targets):
+                if isinstance(targets, list):
+                    # Already a list - filter out None/empty
+                    formatted_targets.append([t for t in targets if t])
+                elif isinstance(targets, str) and targets:
+                    # Single string - wrap in list
+                    formatted_targets.append([targets])
+                else:
+                    # None or empty - empty list
+                    formatted_targets.append([])
+            discussion_targets = formatted_targets
+        
+        # Ensure targets list matches subactions list length
+        while len(discussion_targets) < len(canonical_types):
+            discussion_targets.append([])
+        discussion_targets = discussion_targets[:len(canonical_types)]
+        
+        # Extract targets from content if missing and we have target-required actions
+        # This is a fallback - the prompt should make it clear targets are required
+        target_required_subactions = [
+            "accuse", "defend", "reveal_investigation", 
+            "reveal_protected", "reveal_werewolf"
+        ]
+        for i, subaction_type in enumerate(canonical_types):
+            if subaction_type in target_required_subactions and not discussion_targets[i]:
+                # Try to extract targets from content as fallback
+                content = parsed.get("discussion_content") or parsed.get("reasoning", "")
+                extracted = ResponseFormatter._extract_all_targets_from_text(content)
+                if extracted:
+                    discussion_targets[i] = extracted
+                    logger.warning(f"Extracted targets {extracted} from content for {subaction_type} subaction - targets should be explicitly provided!")
+                else:
+                    logger.warning(f"WARNING: {subaction_type} subaction requires targets but none provided! Action may be invalid.")
+        
+        # Set fields - use new list-based format
+        fields["discussion_subactions"] = canonical_types
+        fields["discussion_targets"] = discussion_targets
+        
+        # Backward compatibility: also set single value
+        fields["discussion_action_type"] = canonical_types[0] if canonical_types else "general_discussion"
         
         # Get discussion content
         content = parsed.get("discussion_content") or parsed.get("reasoning", "")
         fields["discussion_content"] = content[:300]  # Limit for cost savings
         
         # Add claimed role if claiming
-        if canonical_type == "claim_role":
+        if "claim_role" in canonical_types:
             fields["claimed_role"] = role  # Claim true role by default
             
         return fields
+    
+    @staticmethod
+    def _extract_multiple_subactions(content: str) -> List[str]:
+        """Extract multiple discussion subactions from text."""
+        content_lower = content.lower()
+        subactions = []
+        
+        # Check for multiple subaction keywords
+        if "accuse" in content_lower or "accusing" in content_lower:
+            subactions.append("accuse")
+        if "defend" in content_lower or "defending" in content_lower:
+            subactions.append("defend")
+        if "reveal" in content_lower and "identity" in content_lower:
+            subactions.append("reveal_identity")
+        if "claim" in content_lower and "role" in content_lower:
+            subactions.append("claim_role")
+        if "last word" in content_lower or "last words" in content_lower:
+            subactions.append("last_words")
+        
+        return subactions if subactions else ["general_discussion"]
+    
+    @staticmethod
+    def _extract_targets_for_subactions(content: str, subactions: List[str]) -> List[List[str]]:
+        """Extract targets for each subaction from content. Returns list of lists (multiple targets per subaction)."""
+        targets = []
+        
+        # Extract all agent mentions
+        all_agents = ResponseFormatter._extract_all_targets_from_text(content)
+        
+        for subaction in subactions:
+            if subaction in ["accuse", "defend"]:
+                # For accuse/defend, try to extract all mentioned agents
+                # This allows multiple targets per subaction
+                if all_agents:
+                    targets.append(all_agents)
+                else:
+                    targets.append([])
+            else:
+                targets.append([])
+        
+        return targets
     
     @staticmethod
     def _extract_suspicions(

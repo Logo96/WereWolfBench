@@ -29,15 +29,15 @@ Keep your responses concise (under 100 words) and strategic."""
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",  # Default to valid model name
-        temperature: float = 0.7,
+        model: str = "gemini/gemini-2.5-flash",  # Default to Gemini 2.5 Flash (cost-effective)
+        temperature: float = 1,
         max_tokens: int = 4000  # Enforce concise responses
     ):
         """
         Initialize the LLM handler.
         
         Args:
-            model: The LiteLLM model to use (default: gpt-4o-mini)
+            model: The LiteLLM model to use (default: gemini/gemini-2.5-flash)
             temperature: Response temperature (0.0-1.0)
             max_tokens: Maximum tokens in response (kept low for cost savings)
         """
@@ -45,16 +45,41 @@ Keep your responses concise (under 100 words) and strategic."""
         self.temperature = temperature
         self.max_tokens = max_tokens
         
+        # Detect provider based on model name
+        self.is_gemini = model.startswith("gemini/") or "gemini" in model.lower()
+        
         # Configure LiteLLM if available
         if LITELLM_AVAILABLE:
-            # Set API key from environment
-            api_key = os.getenv("OPENAI_API_KEY")
-            litellm.api_key = api_key
+            if self.is_gemini:
+                # For Gemini models, check GEMINI_API_KEY first, then GOOGLE_API_KEY
+                # LiteLLM supports both, but GEMINI_API_KEY is more commonly used
+                api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                # Set both environment variables for LiteLLM compatibility
+                if api_key:
+                    os.environ["GEMINI_API_KEY"] = api_key
+                    os.environ["GOOGLE_API_KEY"] = api_key
+            else:
+                # For OpenAI models, use OPENAI_API_KEY
+                api_key = os.getenv("OPENAI_API_KEY")
+                litellm.api_key = api_key
+                # Set organization ID if provided (helps with organization access)
+                org_id = os.getenv("OPENAI_ORG_ID")
+                if org_id:
+                    litellm.organization = org_id
+            
             # Enable caching for repeated similar prompts
             litellm.cache = None  # Disable for now, can enable for testing
             logger.info(f"✅ LLM Handler initialized with model: {model}")
             logger.info(f"   LiteLLM available: True")
-            logger.info(f"   API Key present: {bool(api_key)}")
+            logger.info(f"   Provider: {'Gemini' if self.is_gemini else 'OpenAI'}")
+            if self.is_gemini:
+                gemini_key = os.getenv("GEMINI_API_KEY")
+                google_key = os.getenv("GOOGLE_API_KEY")
+                api_key_env = "GEMINI_API_KEY" if gemini_key else "GOOGLE_API_KEY"
+                logger.info(f"   API Key ({api_key_env}) present: {bool(api_key)}")
+            else:
+                api_key_env = "OPENAI_API_KEY"
+                logger.info(f"   API Key ({api_key_env}) present: {bool(api_key)}")
             if api_key:
                 logger.info(f"   API Key length: {len(api_key)}")
         else:
@@ -79,27 +104,47 @@ Keep your responses concise (under 100 words) and strategic."""
             # Add marker to identify fallback responses
             return f"[FALLBACK]{fallback_resp}"
         
-        # Check API key
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            logger.error("❌ OPENAI_API_KEY not set - using fallback response")
-            logger.error("   Set with: export OPENAI_API_KEY='your-key'")
-            fallback_resp = self._fallback_response(prompt)
-            return f"[FALLBACK]{fallback_resp}"
+        # Check API key based on model provider
+        if self.is_gemini:
+            # Check GEMINI_API_KEY first, then GOOGLE_API_KEY
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                logger.error("❌ GEMINI_API_KEY or GOOGLE_API_KEY not set - using fallback response")
+                logger.error("   Set with: export GEMINI_API_KEY='your-key'")
+                logger.error("   Or: export GOOGLE_API_KEY='your-key'")
+                logger.error("   Get your key from: https://aistudio.google.com/app/apikey")
+                fallback_resp = self._fallback_response(prompt)
+                return f"[FALLBACK]{fallback_resp}"
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.error("❌ OPENAI_API_KEY not set - using fallback response")
+                logger.error("   Set with: export OPENAI_API_KEY='your-key'")
+                fallback_resp = self._fallback_response(prompt)
+                return f"[FALLBACK]{fallback_resp}"
         
         try:
             logger.info(f"🤖 CALLING LLM: model={self.model}, prompt_length={len(prompt)}")
             logger.info(f"   API Key present: {bool(api_key)}")
             
-            response = await acompletion(
-                model=self.model,
-                messages=[
+            # Prepare API key for LiteLLM
+            # For Gemini, LiteLLM reads from GOOGLE_API_KEY env var automatically
+            # For OpenAI, we pass it via api_key parameter
+            kwargs = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens
+            }
+            
+            # Only set api_key explicitly for non-Gemini models
+            if not self.is_gemini:
+                kwargs["api_key"] = api_key
+            
+            response = await acompletion(**kwargs)
             
             # Extract the response text
             response_text = response.choices[0].message.content
@@ -159,4 +204,5 @@ class MockLLMHandler(LLMHandler):
         
         # Generate deterministic responses based on prompt content
         return self._fallback_response(prompt)
+
 
