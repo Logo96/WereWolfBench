@@ -1,0 +1,30 @@
+name = "Werewolf Benchmark Green Agent"
+description = "Orchestrates Werewolf games between A2A agents to evaluate social deduction and deception detection capabilities."
+version = "0.1.0"
+
+defaultInputModes = ["text"]
+defaultOutputModes = ["text"]
+
+[capabilities]
+streaming = false
+
+[[skills]]
+id = "start_game"
+name = "Start Werewolf Game"
+description = "Start a new Werewolf game with A2A white agents"
+tags = ["green agent", "werewolf", "game", "orchestration"]
+examples = ["Start a game with 4 agents"]
+
+[[skills]]
+id = "get_game_status"
+name = "Get Game Status"
+description = "Get the current status of a running game"
+tags = ["werewolf", "game", "status"]
+examples = ["What's the status of game abc-123?"]
+
+[[skills]]
+id = "list_games"
+name = "List Games"
+description = "List all games managed by this orchestrator"
+tags = ["werewolf", "game", "list"]
+examples = ["Show all games"]

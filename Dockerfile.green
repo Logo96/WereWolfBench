@@ -1,0 +1,27 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Make run.sh executable (for potential controller use)
+RUN chmod +x run.sh
+
+# Set environment variables
+ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV ENVIRONMENT=production
+# Controller needs to know the public hostname for agent URLs
+ENV CLOUDRUN_HOST=werewolf-green-1047600885700.us-central1.run.app
+# BASE_URL will be overridden by AGENT_URL if set by AgentBeats
+ENV BASE_URL=https://werewolf-green-1047600885700.us-central1.run.app
+
+EXPOSE 8080
+
+# Run via AgentBeats controller which handles /status and /agents
+CMD ["agentbeats", "run_ctrl"]

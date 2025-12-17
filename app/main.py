@@ -2,21 +2,21 @@
 
 import os
 import logging
-import uuid
 import json
-from typing import List, Optional, Dict, Any
-from contextlib import asynccontextmanager
+import tomllib
+from typing import Optional, Dict, Any
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from dotenv import load_dotenv
 
-from a2a.types import (
-    AgentCard, AgentSkill, AgentCapabilities, AgentInterface,
-    SendMessageRequest, Message, Part, TextPart, Role,
-    Task, TaskStatus, TaskState
-)
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import AgentCard
+from a2a.utils import new_agent_text_message
 
 from app.orchestrator import GameOrchestrator
 from app.logging.storage import GameLogger
@@ -30,227 +30,173 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global state
 storage: Optional[GameLogger] = None
 orchestrator: Optional[GameOrchestrator] = None
 
 
-async def handle_start_game(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle start_game task"""
-    agent_urls = params.get("agent_urls", [])
-    config = params.get("config")
-
-    if len(agent_urls) < 4:
-        raise ValueError("Minimum 4 agents required")
-
-    game_config = GameConfig(**config) if config else None
-    game_id = await orchestrator.start_game(agent_urls, game_config)
-
-    return {
-        "game_id": game_id,
-        "status": "started",
-        "num_agents": len(agent_urls)
-    }
-
-
-async def handle_get_game_status(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle get_game_status task"""
-    game_id = params.get("game_id")
-    if not game_id:
-        raise ValueError("game_id is required")
-
-    game_state = storage.get_game(game_id)
-    if not game_state:
-        raise ValueError(f"Game {game_id} not found")
-
-    return {
-        "game_id": game_id,
-        "status": game_state.status.value,
-        "phase": game_state.phase.value,
-        "round_number": game_state.round_number,
-        "alive_agents": game_state.alive_agent_ids,
-        "eliminated_agents": game_state.eliminated_agent_ids,
-        "winner": game_state.winner
-    }
-
-
-async def handle_list_games(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle list_games task"""
-    summaries = [
-        storage.get_game_summary(game_id)
-        for game_id in storage.list_games()
-    ]
-    return {
-        "total_games": len(summaries),
-        "games": [s for s in summaries if s]
-    }
-
-
-TASK_HANDLERS = {
-    "start_game": handle_start_game,
-    "get_game_status": handle_get_game_status,
-    "list_games": handle_list_games,
-}
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def init_globals():
+    """Initialize global storage and orchestrator."""
     global storage, orchestrator
-
     storage = GameLogger()
     orchestrator = GameOrchestrator(storage)
+    logger.info("Initialized Werewolf Benchmark Green Agent")
 
-    logger.info("Started Werewolf Benchmark Green Agent")
-    yield
 
+async def cleanup_globals():
+    """Cleanup global resources."""
+    global orchestrator
     if orchestrator:
         await orchestrator.close()
 
 
-app = FastAPI(
-    title="Werewolf Benchmark Green Agent",
-    version="0.1.0",
-    lifespan=lifespan
-)
+class WerewolfGreenAgentExecutor(AgentExecutor):
+    """Executor for Werewolf Benchmark Green Agent."""
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
+    async def execute(
+        self,
+        context: RequestContext,
+        event_queue: EventQueue,
+    ) -> None:
+        """Execute a task based on the incoming message."""
+        global storage, orchestrator
 
+        # Parse the incoming message
+        user_message = context.message
+        task_name = None
+        task_params = {}
 
-@app.get("/")
-async def root():
-    return {
-        "name": "Werewolf Benchmark Green Agent",
-        "type": "A2A",
-        "discovery": "/agent.json"
-    }
+        for part in user_message.parts:
+            if hasattr(part, 'root') and hasattr(part.root, 'text'):
+                text = part.root.text
+            elif hasattr(part, 'text'):
+                text = part.text
+            else:
+                continue
 
+            try:
+                task_data = json.loads(text)
+                task_name = task_data.get("task")
+                task_params = task_data.get("parameters", {})
+                break
+            except json.JSONDecodeError:
+                continue
 
-@app.get("/agent.json")
-async def get_agent_card():
-    """Return the A2A AgentCard"""
-    agent_card = AgentCard(
-        name="Werewolf Benchmark Green Agent",
-        version="0.1.0",
-        description="Orchestrates Werewolf games between A2A agents. White agents must implement werewolf_action capability.",
-        url=os.getenv("BASE_URL", "http://localhost:8000"),
-        preferred_transport="JSONRPC",
-        protocol_version="0.3.0",
-        capabilities=AgentCapabilities(
-            streaming=False,
-            push_notifications=False,
-            state_transition_history=False
-        ),
-        default_input_modes=["text/plain", "application/json"],
-        default_output_modes=["application/json"],
-        skills=[
-            AgentSkill(
-                id="start_game",
-                name="Start Game",
-                description="Start a new Werewolf game with A2A agents",
-                tags=["werewolf", "game", "orchestration"],
-                examples=["Start a game with 4 agents"]
-            ),
-            AgentSkill(
-                id="get_game_status",
-                name="Get Game Status",
-                description="Get the current status of a game",
-                tags=["werewolf", "game", "status"],
-                examples=["What's the status of game abc-123?"]
-            ),
-            AgentSkill(
-                id="list_games",
-                name="List Games",
-                description="List all games",
-                tags=["werewolf", "game", "list"],
-                examples=["Show all games"]
-            )
-        ]
-    )
-    return agent_card.model_dump(exclude_none=True)
+        try:
+            if task_name == "start_game":
+                result = await self._handle_start_game(task_params)
+            elif task_name == "get_game_status":
+                result = await self._handle_get_game_status(task_params)
+            elif task_name == "list_games":
+                result = await self._handle_list_games(task_params)
+            else:
+                result = {"error": f"Unknown task: {task_name}"}
 
+            # Send response
+            response_message = new_agent_text_message(json.dumps(result))
+            event_queue.enqueue_event(response_message)
 
-@app.post("/")
-async def handle_jsonrpc(request: Request):
-    """Handle A2A JSON-RPC requests"""
-    try:
-        data = await request.json()
-        method = data.get("method")
-        params = data.get("params", {})
-        req_id = data.get("id")
+        except Exception as e:
+            logger.error(f"Error executing task: {e}", exc_info=True)
+            error_message = new_agent_text_message(json.dumps({"error": str(e)}))
+            event_queue.enqueue_event(error_message)
 
-        if method == "message/send":
-            # Extract the task from the message
-            message_params = params.get("message")
-            if not message_params:
-                raise ValueError("message parameter required")
+    async def _handle_start_game(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle start_game task."""
+        agent_urls = params.get("agent_urls", [])
+        config = params.get("config")
 
-            # Parse the message to determine task
-            message_parts = message_params.get("parts", [])
-            task_name = None
-            task_params = {}
+        if len(agent_urls) < 4:
+            raise ValueError("Minimum 4 agents required")
 
-            for part in message_parts:
-                if part.get("kind") == "text":
-                    text = part.get("text", "")
-                    try:
-                        task_data = json.loads(text)
-                        task_name = task_data.get("task")
-                        task_params = task_data.get("parameters", {})
-                    except:
-                        pass
+        game_config = GameConfig(**config) if config else None
+        game_id = await orchestrator.start_game(agent_urls, game_config)
 
-            if not task_name or task_name not in TASK_HANDLERS:
-                raise ValueError(f"Unknown task: {task_name}")
-
-            result_data = await TASK_HANDLERS[task_name](task_params)
-
-            task_id = str(uuid.uuid4())
-            context_id = str(uuid.uuid4())
-
-            response_message = Message(
-                message_id=str(uuid.uuid4()),
-                role=Role.agent,
-                parts=[
-                    TextPart(kind="text", text=json.dumps(result_data))
-                ]
-            )
-
-            return {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": response_message.model_dump(exclude_none=True)
-            }
-        else:
-            raise ValueError(f"Unsupported method: {method}")
-
-    except Exception as e:
-        logger.error(f"Error handling JSON-RPC request: {e}", exc_info=True)
         return {
-            "jsonrpc": "2.0",
-            "id": req_id if 'req_id' in locals() else None,
-            "error": {
-                "code": -32603,
-                "message": "Internal error",
-                "data": str(e)
-            }
+            "game_id": game_id,
+            "status": "started",
+            "num_agents": len(agent_urls)
         }
 
+    async def _handle_get_game_status(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle get_game_status task."""
+        game_id = params.get("game_id")
+        if not game_id:
+            raise ValueError("game_id is required")
 
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "storage": storage is not None,
-        "orchestrator": orchestrator is not None
-    }
+        game_state = storage.get_game(game_id)
+        if not game_state:
+            raise ValueError(f"Game {game_id} not found")
+
+        return {
+            "game_id": game_id,
+            "status": game_state.status.value,
+            "phase": game_state.phase.value,
+            "round_number": game_state.round_number,
+            "alive_agents": game_state.alive_agent_ids,
+            "eliminated_agents": game_state.eliminated_agent_ids,
+            "winner": game_state.winner
+        }
+
+    async def _handle_list_games(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle list_games task."""
+        summaries = [
+            storage.get_game_summary(game_id)
+            for game_id in storage.list_games()
+        ]
+        return {
+            "total_games": len(summaries),
+            "games": [s for s in summaries if s]
+        }
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Cancel a running task."""
+        pass
+
+
+def load_agent_card_toml(agent_name: str = "green_agent") -> dict:
+    """Load agent card configuration from TOML file."""
+    # Look for TOML file in project root
+    toml_path = Path(__file__).parent.parent / f"{agent_name}.toml"
+    with open(toml_path, "rb") as f:
+        return tomllib.load(f)
+
+
+def start_green_agent(agent_name: str = "green_agent", host: str = "localhost", port: int = 9001):
+    """Start the green agent server."""
+    logger.info("Starting Werewolf Benchmark Green Agent...")
+
+    # Initialize globals
+    init_globals()
+
+    # Load agent card from TOML
+    agent_card_dict = load_agent_card_toml(agent_name)
+
+    # Set URL from AGENT_URL environment variable (set by AgentBeats platform)
+    # Fallback to BASE_URL or construct from host/port for local dev
+    agent_url = os.getenv("AGENT_URL") or os.getenv("BASE_URL") or f"http://{host}:{port}"
+    agent_card_dict["url"] = agent_url
+
+    logger.info(f"Agent URL: {agent_card_dict['url']}")
+
+    # Create request handler with executor
+    request_handler = DefaultRequestHandler(
+        agent_executor=WerewolfGreenAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+
+    # Create A2A application
+    agent_card = AgentCard(**agent_card_dict)
+    a2a_app = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
+    )
+
+    # Run the server - controller handles /status and /agents
+    uvicorn.run(a2a_app.build(), host=host, port=port)
 
 
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("app.main:app", host=host, port=port, reload=True)
+    port = int(os.getenv("PORT", "8080"))
+    start_green_agent(host=host, port=port)

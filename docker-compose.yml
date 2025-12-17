@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  green-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.green
+    ports:
+      - "8000:8080"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - BASE_URL=http://localhost:8000
+      - ENVIRONMENT=development
+    volumes:
+      - ./game_logs:/app/game_logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # White agent placeholder for future deployment
+  # white-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.white
+  #   ports:
+  #     - "9000:8080"
+  #   environment:
+  #     - HOST=0.0.0.0
+  #     - PORT=8080
+  #     - ENVIRONMENT=development
