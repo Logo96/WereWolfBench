@@ -35,7 +35,7 @@ class GameConfig(BaseModel):
     has_witch: bool = Field(False, description="Whether to include a witch")
     discussion_time_limit: int = Field(300, description="Time limit for discussion in seconds")
     voting_time_limit: int = Field(60, description="Time limit for voting in seconds")
-    max_rounds: int = Field(20, description="Maximum number of rounds before game ends")
+    max_rounds: Optional[int] = Field(None, description="Maximum number of rounds before game ends (None = no limit)")
 
 
 class RoundRecord(BaseModel):

@@ -21,173 +21,401 @@ class PromptBuilder:
     
     # Base templates for different phases
     PHASE_TEMPLATES = {
-        GamePhase.DAY_DISCUSSION: """=== WEREWOLF GAME - DAY DISCUSSION (Round {round}) ===
+        GamePhase.DAY_DISCUSSION: """🌅 DAY BREAKS - ROUND {round} DISCUSSION PHASE 🌅
 
-You are {agent_id}, a {role} in this game of Werewolf.
+The sun rises over the village. Last night was quiet... or was it? It's time to discuss what happened and decide who to eliminate.
+
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} ({role})
+═══════════════════════════════════════════════════════════
+
 {role_instruction}
 
-GAME STATE:
-- Round: {round}
-- Phase: Day Discussion (everyone speaks once, then votes)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
 {private_info}
 
+═══════════════════════════════════════════════════════════
+WHAT OTHERS HAVE SAID THIS ROUND
+═══════════════════════════════════════════════════════════
 {discussion_context}
 
-YOUR TASK:
-Share your thoughts with the village. Be strategic based on your role.
-- If you're a villager/seer/doctor: Help identify werewolves
-- If you're a werewolf: Blend in, deflect suspicion
+═══════════════════════════════════════════════════════════
+YOUR TURN TO SPEAK
+═══════════════════════════════════════════════════════════
+This is your chance to influence the village. What will you say?
 
-Respond CONCISELY (under 100 words) with:
+STRATEGIC OPTIONS:
+- Share observations about suspicious behavior
+- Accuse someone you believe is a werewolf
+- Defend yourself or someone else from accusations
+- Claim a role (if you're Seer/Doctor/etc. and want to reveal)
+- Reveal investigation results (if you're the Seer)
+- Ask questions to gather information
+- Create alliances or build trust
+
+Remember: Werewolves are listening. Choose your words carefully.
+
+Respond with your message to the village (keep it under 100 words):
 ACTION: discuss
 DISCUSSION_TYPE: [general_discussion|accuse|defend|claim_role|reveal_identity]
 TARGET: [agent_id if accusing/defending, otherwise none]
-CONTENT: [your message to the village]
-REASONING: [brief 1-sentence explanation]""",
+CONTENT: [your message - be strategic and role-appropriate]
+REASONING: [why you're saying this - your strategic thinking]""",
 
-        GamePhase.DAY_VOTING: """=== WEREWOLF GAME - DAY VOTING (Round {round}) ===
+        GamePhase.DAY_VOTING: """🗳️ VOTING TIME - ROUND {round} 🗳️
 
-You are {agent_id}, a {role}.
+Discussion is over. The village must now vote to eliminate someone. This is a critical decision - choose wisely.
+
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} ({role})
+═══════════════════════════════════════════════════════════
+
 {role_instruction}
 
-GAME STATE:
-- Round: {round}
-- Phase: Day Voting (vote to eliminate one player)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
+═══════════════════════════════════════════════════════════
+CURRENT VOTES
+═══════════════════════════════════════════════════════════
 {current_votes}
 
-YOUR TASK:
-Vote for a player to eliminate. You cannot vote for yourself.
-Valid targets: {valid_targets}
+═══════════════════════════════════════════════════════════
+YOUR VOTE
+═══════════════════════════════════════════════════════════
+You must vote to eliminate one player. This decision could save the village... or doom it.
 
-Respond CONCISELY with:
+STRATEGIC CONSIDERATIONS:
+- Vote for the player you believe is most likely a werewolf
+- Consider voting patterns - are others coordinating?
+- Think about who would benefit from eliminating each player
+- Remember: Werewolves will vote together to eliminate villagers
+- If you're a werewolf, vote strategically to eliminate threats or create misdirection
+
+Valid targets: {valid_targets}
+(You cannot vote for yourself)
+
+Respond with your vote:
 ACTION: vote
 TARGET: [agent_id to eliminate]
-REASONING: [brief 1-sentence explanation]""",
+REASONING: [why you're voting for this player - your strategic reasoning]""",
 
-        GamePhase.NIGHT_WEREWOLF: """=== WEREWOLF GAME - NIGHT PHASE (Round {round}) ===
+        GamePhase.NIGHT_WEREWOLF: """🌙 NIGHT FALLS - WEREWOLF HUNT (Round {round}) 🌙
 
-You are {agent_id}, a WEREWOLF.
+The sun sets and darkness envelops the village. The werewolves awaken...
 
-WEREWOLF KNOWLEDGE:
-- Your fellow werewolves: {werewolf_teammates}
-- You must work together to eliminate villagers
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} - WEREWOLF
+═══════════════════════════════════════════════════════════
 
-GAME STATE:
-- Round: {round}
-- Phase: Night (Werewolf Turn)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+{role_instruction}
+
+═══════════════════════════════════════════════════════════
+YOUR PACK
+═══════════════════════════════════════════════════════════
+Your fellow werewolves: {werewolf_teammates}
+Work together to eliminate the villagers. You know each other's identities.
+
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
-YOUR TASK:
-Choose a villager to kill tonight. You cannot target fellow werewolves.
-Valid targets: {valid_targets}
+═══════════════════════════════════════════════════════════
+YOUR HUNT
+═══════════════════════════════════════════════════════════
+Choose your target for tonight. This is a critical decision.
 
-Respond CONCISELY with:
+STRATEGIC TARGETS TO CONSIDER:
+- The Seer (if you've identified them) - eliminate them before they reveal findings
+- The Doctor (if you've identified them) - they can protect others
+- Strong villagers who are organizing the village
+- Players who seem suspicious of you or your teammates
+- Create misdirection by targeting unexpected players
+
+Valid targets: {valid_targets}
+(You cannot target fellow werewolves)
+
+Respond with your kill target:
 ACTION: kill
 TARGET: [agent_id to kill]
-REASONING: [brief 1-sentence explanation]""",
+REASONING: [why you're targeting this player - your strategic reasoning]""",
 
-        GamePhase.NIGHT_SEER: """=== WEREWOLF GAME - NIGHT PHASE (Round {round}) ===
+        GamePhase.NIGHT_SEER: """🔮 NIGHT PHASE - SEER INVESTIGATION (Round {round}) 🔮
 
-You are {agent_id}, the SEER.
+While the village sleeps, your mystical powers awaken. You can see through deception...
 
-SEER POWER:
-Each night, you can investigate one player to learn if they are a werewolf.
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} - THE SEER
+═══════════════════════════════════════════════════════════
+
+{role_instruction}
+
+═══════════════════════════════════════════════════════════
+YOUR INVESTIGATION POWER
+═══════════════════════════════════════════════════════════
+Each night, you can investigate one player to learn their true nature:
+- You will learn if they are a WEREWOLF or NOT a werewolf
+- Use this information wisely to help the village
 
 PREVIOUS INVESTIGATIONS:
 {investigation_results}
 
-GAME STATE:
-- Round: {round}
-- Phase: Night (Seer Turn)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
-YOUR TASK:
-Choose a player to investigate. You cannot investigate yourself.
-Valid targets: {valid_targets}
+═══════════════════════════════════════════════════════════
+YOUR INVESTIGATION
+═══════════════════════════════════════════════════════════
+Choose who to investigate tonight. This information could save the village.
 
-Respond CONCISELY with:
+STRATEGIC CONSIDERATIONS:
+- Investigate players who seem suspicious or are acting strangely
+- Investigate players who are making strong accusations (could be werewolves deflecting)
+- Investigate players who are being quiet or avoiding discussion
+- Consider investigating players who others trust (verify their innocence)
+- Don't waste investigations on players you're already confident about
+
+Valid targets: {valid_targets}
+(You cannot investigate yourself)
+
+Respond with your investigation target:
 ACTION: investigate
 TARGET: [agent_id to investigate]
-REASONING: [brief 1-sentence explanation]""",
+REASONING: [why you're investigating this player - your strategic reasoning]""",
 
-        GamePhase.NIGHT_DOCTOR: """=== WEREWOLF GAME - NIGHT PHASE (Round {round}) ===
+        GamePhase.NIGHT_DOCTOR: """💊 NIGHT PHASE - DOCTOR PROTECTION (Round {round}) 💊
 
-You are {agent_id}, the DOCTOR.
+While darkness falls, you prepare your healing arts. You can save one person tonight...
 
-DOCTOR POWER:
-Each night, you can protect one player from being killed by werewolves.
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} - THE DOCTOR
+═══════════════════════════════════════════════════════════
 
-GAME STATE:
-- Round: {round}
-- Phase: Night (Doctor Turn)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+{role_instruction}
+
+═══════════════════════════════════════════════════════════
+YOUR PROTECTION POWER
+═══════════════════════════════════════════════════════════
+Each night, you can protect one player from werewolf attacks.
+- If werewolves target the player you protect, they will survive
+- You can protect yourself
+- Use this power wisely - you can only protect one person per night
+
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
-YOUR TASK:
-Choose a player to protect tonight.
+═══════════════════════════════════════════════════════════
+YOUR PROTECTION
+═══════════════════════════════════════════════════════════
+Choose who to protect tonight. Your choice could save a crucial player.
+
+STRATEGIC CONSIDERATIONS:
+- Protect yourself if you're suspicious or revealed
+- Protect the Seer if they've revealed themselves
+- Protect players who are organizing the village
+- Protect players who seem like likely werewolf targets
+- Consider protecting suspicious players (they might be werewolves, but better safe than sorry)
+- Don't waste protection on players unlikely to be targeted
+
 Valid targets: {valid_targets}
 
-Respond CONCISELY with:
+Respond with your protection target:
 ACTION: protect
 TARGET: [agent_id to protect]
-REASONING: [brief 1-sentence explanation]""",
+REASONING: [why you're protecting this player - your strategic reasoning]""",
 
-        GamePhase.NIGHT_WITCH: """=== WEREWOLF GAME - NIGHT PHASE (Round {round}) ===
+        GamePhase.NIGHT_WITCH: """🧪 NIGHT PHASE - WITCH DECISION (Round {round}) 🧪
 
-You are {agent_id}, the WITCH.
+The night deepens. Your potions await your command. Will you use them?
 
-WITCH POWERS:
-- Heal Potion: {heal_status} (can save the werewolf victim)
-- Poison Potion: {poison_status} (can kill any player)
+═══════════════════════════════════════════════════════════
+YOUR IDENTITY: {agent_id} - THE WITCH
+═══════════════════════════════════════════════════════════
+
+{role_instruction}
+
+═══════════════════════════════════════════════════════════
+YOUR POTIONS
+═══════════════════════════════════════════════════════════
+You have TWO powerful potions, each usable only ONCE:
+
+1. HEAL POTION: {heal_status}
+   - Can save the player killed by werewolves tonight
+   - Use it immediately after learning who was killed
+   - Once used, it's gone forever
+
+2. POISON POTION: {poison_status}
+   - Can eliminate ANY player (alive or dead)
+   - Use it to eliminate confirmed werewolves or threats
+   - Once used, it's gone forever
 
 {killed_info}
 
-GAME STATE:
-- Round: {round}
-- Phase: Night (Witch Turn)
-- Alive Players: {alive_agents}
-- Eliminated Players: {eliminated_agents}
+═══════════════════════════════════════════════════════════
+CURRENT SITUATION
+═══════════════════════════════════════════════════════════
+Round: {round}
+Alive Players ({alive_count}): {alive_agents}
+Eliminated Players: {eliminated_agents}
 
 {public_info}
 
-YOUR TASK:
-Decide whether to use a potion. Options:
-- heal [killed_player] (if someone was killed and you have heal potion)
-- poison [agent_id] (if you have poison potion)
-- pass (use no potion)
+═══════════════════════════════════════════════════════════
+YOUR DECISION
+═══════════════════════════════════════════════════════════
+Decide whether to use a potion tonight. These are powerful but limited resources.
 
-Respond CONCISELY with:
+STRATEGIC CONSIDERATIONS:
+- Use HEAL to save the Seer, Doctor, or other key players
+- Use POISON to eliminate confirmed werewolves or major threats
+- Save potions for critical moments - you only get one of each
+- Don't waste potions on uncertain situations
+- Consider: Is this the right time to act, or should you wait?
+
+Your options:
+- heal [killed_player] - Save someone killed by werewolves (if heal available)
+- poison [agent_id] - Eliminate any player (if poison available)
+- pass - Use no potion this night
+
+Respond with your decision:
 ACTION: [heal|poison|pass]
 TARGET: [agent_id or none]
-REASONING: [brief 1-sentence explanation]""",
+REASONING: [why you're making this decision - your strategic reasoning]""",
     }
     
-    # Role-specific instructions
+    # Role-specific instructions with win conditions and strategic guidance
     ROLE_INSTRUCTIONS = {
-        AgentRole.VILLAGER: "As a VILLAGER, your goal is to identify and eliminate all werewolves through discussion and voting.",
-        AgentRole.WEREWOLF: "As a WEREWOLF, your goal is to eliminate villagers without being discovered. Blend in during discussions.",
-        AgentRole.SEER: "As the SEER, your goal is to use your investigation power wisely and help the village identify werewolves.",
-        AgentRole.DOCTOR: "As the DOCTOR, your goal is to protect key players from werewolf attacks.",
-        AgentRole.WITCH: "As the WITCH, your goal is to use your potions strategically to help the village.",
-        AgentRole.HUNTER: "As the HUNTER, your goal is to help identify werewolves. If eliminated, you can take one player with you.",
+        AgentRole.VILLAGER: """YOUR ROLE: VILLAGER
+YOUR GOAL: Eliminate all werewolves before they eliminate the villagers.
+
+STRATEGIC GUIDANCE:
+- Pay close attention to everyone's behavior and statements
+- Look for inconsistencies, suspicious voting patterns, or unusual accusations
+- Trust the Seer if they reveal their identity and findings
+- Be cautious of false accusations - werewolves will try to frame innocent players
+- Build alliances with other villagers, but verify claims carefully
+- If you're eliminated, the village loses a valuable voice
+
+WHAT YOU KNOW:
+- You are innocent and want to protect the village
+- Werewolves are among the players, but you don't know who they are
+- You must work with other villagers to identify threats through discussion and voting""",
+
+        AgentRole.WEREWOLF: """YOUR ROLE: WEREWOLF
+YOUR GOAL: Eliminate enough villagers so that werewolves equal or outnumber them.
+
+STRATEGIC GUIDANCE:
+- You know your fellow werewolves: {werewolf_teammates}
+- Work together strategically, but NEVER reveal your teammates publicly
+- Blend in during discussions - act like a concerned villager
+- Deflect suspicion away from yourself and your teammates
+- Consider framing innocent players to create confusion
+- Vote strategically to eliminate threats (Seer, Doctor) or create misdirection
+- If villagers identify you, try to create doubt or shift blame
+
+WHAT YOU KNOW:
+- Your werewolf teammates (work together but secretly)
+- Who the villagers are (your targets)
+- You must eliminate villagers without being discovered
+- If you're caught, you're eliminated and your team loses a member""",
+
+        AgentRole.SEER: """YOUR ROLE: SEER
+YOUR GOAL: Use your investigation power to identify werewolves and help the village eliminate them.
+
+STRATEGIC GUIDANCE:
+- Each night you can investigate one player to learn if they're a werewolf
+- Use your investigations wisely - you're a prime target for werewolves
+- Consider revealing your identity strategically, but beware of counter-claims
+- Share your findings carefully - werewolves may try to discredit you
+- Protect yourself - if werewolves know you're the Seer, they'll target you
+- Build trust with confirmed villagers through your investigations
+
+WHAT YOU KNOW:
+- Your investigation results (see below)
+- Werewolves will try to eliminate you if they discover your role
+- The village needs your information, but revealing too early can be dangerous
+- You're one of the most powerful roles - use it strategically""",
+
+        AgentRole.DOCTOR: """YOUR ROLE: DOCTOR
+YOUR GOAL: Protect key players from werewolf attacks and help the village identify threats.
+
+STRATEGIC GUIDANCE:
+- Each night you can protect one player from being killed
+- Protect yourself early if you're suspicious, or protect likely targets (Seer, other key roles)
+- Don't reveal your role unless necessary - werewolves will target you
+- Consider protecting players who seem suspicious - they might be werewolves trying to frame others
+- Your protection is powerful but limited - use it strategically
+- Work with the Seer if they reveal themselves - protect them!
+
+WHAT YOU KNOW:
+- You can save one player per night from werewolf attacks
+- Werewolves will target you if they discover your role
+- The village needs you alive to protect key players
+- Your protection is crucial for the village's survival""",
+
+        AgentRole.WITCH: """YOUR ROLE: WITCH
+YOUR GOAL: Use your potions strategically to help the village eliminate werewolves.
+
+STRATEGIC GUIDANCE:
+- You have TWO potions: one heal (save a killed player) and one poison (kill any player)
+- Use your heal potion wisely - you can only use it once
+- Use your poison potion to eliminate confirmed werewolves or suspicious players
+- Don't reveal your role unless necessary - werewolves will target you
+- Consider saving the Seer or Doctor if they're killed
+- Your potions are powerful but limited - use them strategically
+
+WHAT YOU KNOW:
+- Heal potion: {heal_status} (can save the werewolf victim tonight)
+- Poison potion: {poison_status} (can eliminate any player)
+- Werewolves will target you if they discover your role
+- Your potions can turn the tide of the game""",
+
+        AgentRole.HUNTER: """YOUR ROLE: HUNTER
+YOUR GOAL: Help identify werewolves. If eliminated, you can take one player with you.
+
+STRATEGIC GUIDANCE:
+- You're a powerful role - werewolves will be cautious about eliminating you
+- Use your threat to deter werewolves from targeting you
+- If you're eliminated, you MUST shoot someone - choose wisely
+- Consider shooting confirmed werewolves or highly suspicious players
+- Your shot is your final act - make it count for the village
+
+WHAT YOU KNOW:
+- If eliminated, you can shoot one player (they die immediately)
+- Werewolves may avoid eliminating you due to your threat
+- Your shot can eliminate a werewolf or save the village
+- Use your role to protect the village even in death""",
     }
 
     @staticmethod
@@ -249,9 +477,34 @@ REASONING: [brief 1-sentence explanation]""",
             "role": role.value if role else "unknown",
             "round": game_state.round_number,
             "alive_agents": ", ".join(game_state.alive_agent_ids),
+            "alive_count": len(game_state.alive_agent_ids),
             "eliminated_agents": ", ".join(game_state.eliminated_agent_ids) or "none",
-            "role_instruction": PromptBuilder.ROLE_INSTRUCTIONS.get(role, "Play strategically."),
         }
+        
+        # Role-specific variables (needed before building role_instruction)
+        if role == AgentRole.WEREWOLF:
+            teammates = [
+                aid for aid, r in game_state.role_assignments.items()
+                if r == AgentRole.WEREWOLF.value and aid != agent_id
+            ]
+            variables["werewolf_teammates"] = ", ".join(teammates) if teammates else "none (you're alone)"
+        else:
+            variables["werewolf_teammates"] = "N/A"
+        
+        if role == AgentRole.WITCH:
+            variables["heal_status"] = "AVAILABLE" if not game_state.witch_heal_used else "USED"
+            variables["poison_status"] = "AVAILABLE" if not game_state.witch_poison_used else "USED"
+        else:
+            variables["heal_status"] = "N/A"
+            variables["poison_status"] = "N/A"
+        
+        # Build role instruction (with dynamic formatting for werewolf)
+        role_instruction_template = PromptBuilder.ROLE_INSTRUCTIONS.get(role, "Play strategically.")
+        try:
+            variables["role_instruction"] = role_instruction_template.format(**variables)
+        except KeyError:
+            # If formatting fails, use template as-is
+            variables["role_instruction"] = role_instruction_template
         
         # Valid targets (exclude self and role-specific exclusions)
         valid_targets = PromptBuilder._get_valid_targets(game_state, agent)
@@ -269,26 +522,22 @@ REASONING: [brief 1-sentence explanation]""",
         # Current votes (for voting phase)
         variables["current_votes"] = PromptBuilder._format_current_votes(game_state)
         
-        # Role-specific variables
-        if role == AgentRole.WEREWOLF:
-            teammates = [
-                aid for aid, r in game_state.role_assignments.items()
-                if r == AgentRole.WEREWOLF.value and aid != agent_id
-            ]
-            variables["werewolf_teammates"] = ", ".join(teammates) or "none (you're alone)"
-        
+        # Role-specific investigation results
         if role == AgentRole.SEER:
             variables["investigation_results"] = PromptBuilder._format_investigation_results(
                 game_state, agent_id
             )
+        else:
+            variables["investigation_results"] = "N/A"
         
+        # Witch-specific killed info
         if role == AgentRole.WITCH:
-            variables["heal_status"] = "AVAILABLE" if not game_state.witch_heal_used else "USED"
-            variables["poison_status"] = "AVAILABLE" if not game_state.witch_poison_used else "USED"
             if game_state.killed_this_night:
                 variables["killed_info"] = f"WEREWOLF VICTIM: {game_state.killed_this_night} was targeted by werewolves tonight."
             else:
                 variables["killed_info"] = "No one was targeted by werewolves tonight."
+        else:
+            variables["killed_info"] = ""
         
         return variables
     
@@ -374,9 +623,9 @@ REASONING: [brief 1-sentence explanation]""",
     def _format_discussion_context(discussion_context: List[Dict[str, Any]] = None) -> str:
         """Format previous discussion messages in current round for sequential context."""
         if not discussion_context:
-            return "CURRENT ROUND DISCUSSION:\nYou are the first to speak this round."
+            return "You are the first to speak this round. Set the tone for the discussion."
         
-        lines = ["CURRENT ROUND DISCUSSION (what others have said):"]
+        lines = []
         for msg in discussion_context:
             speaker = msg.get("agent_id", "unknown")
             content = msg.get("content", msg.get("discussion_content", ""))
@@ -384,7 +633,7 @@ REASONING: [brief 1-sentence explanation]""",
                 content = content[:147] + "..."
             lines.append(f"  {speaker}: \"{content}\"")
         
-        return "\n".join(lines)
+        return "\n".join(lines) if lines else "You are the first to speak this round."
     
     @staticmethod
     def _format_current_votes(game_state: GameState) -> str:

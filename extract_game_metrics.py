@@ -48,6 +48,16 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
     game_id = game_created["game_id"]
     role_assignments = game_created["role_assignments"]
     
+    # Extract agent model information from agents_assigned event
+    agent_models = {}
+    for event in events:
+        if event.get("event") == "agents_assigned":
+            for agent in event.get("agents", []):
+                agent_id = agent.get("id")
+                model = agent.get("model")
+                if agent_id and model:
+                    agent_models[agent_id] = model
+    
     # Find game completion event
     game_completed = None
     for event in events:
@@ -123,6 +133,7 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
         "final_alive": final_alive,
         "final_eliminated": final_eliminated,
         "role_assignments": role_assignments,
+        "agent_models": agent_models,  # Model used by each agent
         "action_counts": action_counts,
         "discussion_actions_count": len(discussion_actions),
         "investigation_actions_count": len(investigation_actions),
@@ -150,6 +161,27 @@ def extract_game_metrics(game_log_path: str) -> Dict[str, Any]:
     # Calculate role-specific metrics
     role_specific_metrics = calculate_role_specific_metrics(events, role_assignments, final_eliminated)
     metrics.update(role_specific_metrics)
+    
+    # Calculate model-specific metrics
+    model_metrics = calculate_model_metrics(events, agent_models, role_assignments, final_eliminated)
+    metrics.update(model_metrics)
+    
+    # Calculate high-priority metrics
+    response_time_metrics = calculate_response_time_metrics(events, agent_models)
+    metrics.update(response_time_metrics)
+    
+    voting_pattern_metrics = calculate_voting_pattern_metrics(events, role_assignments)
+    metrics.update(voting_pattern_metrics)
+    
+    survival_metrics = calculate_survival_metrics(events, role_assignments, final_alive, final_eliminated, total_rounds)
+    metrics.update(survival_metrics)
+    
+    round_progression_metrics = calculate_round_progression_metrics(events, role_assignments)
+    metrics.update(round_progression_metrics)
+    
+    # Additional role-specific metrics
+    enhanced_role_metrics = calculate_enhanced_role_metrics(events, role_assignments, final_eliminated)
+    metrics.update(enhanced_role_metrics)
     
     return metrics
 
@@ -475,6 +507,480 @@ def get_round_from_timestamp(timestamp: str, events: List[Dict]) -> int:
 def is_werewolf(agent_id: str, role_assignments: Dict[str, str]) -> bool:
     """Check if an agent is a werewolf."""
     return role_assignments.get(agent_id) == "werewolf"
+
+
+def calculate_model_metrics(events: List[Dict], agent_models: Dict[str, str], role_assignments: Dict[str, str], eliminated_agents: List[str]) -> Dict[str, Any]:
+    """Calculate metrics broken down by LLM model."""
+    if not agent_models:
+        return {}
+    
+    # Group agents by model
+    agents_by_model = {}
+    for agent_id, model in agent_models.items():
+        if model not in agents_by_model:
+            agents_by_model[model] = []
+        agents_by_model[model].append(agent_id)
+    
+    # Calculate per-model statistics
+    model_stats = {}
+    for model, agent_ids in agents_by_model.items():
+        # Count roles per model
+        roles_by_model = {}
+        for agent_id in agent_ids:
+            role = role_assignments.get(agent_id, "unknown")
+            roles_by_model[role] = roles_by_model.get(role, 0) + 1
+        
+        # Count survivors per model
+        survivors = [aid for aid in agent_ids if aid not in eliminated_agents]
+        eliminated = [aid for aid in agent_ids if aid in eliminated_agents]
+        
+        # Count winners (if game ended with a winner)
+        winners = []
+        for event in events:
+            if event.get("event") == "game_completed":
+                winner = event.get("winner")
+                if winner:
+                    # Check if any agents from this model were on winning team
+                    if winner == "werewolves":
+                        winners = [aid for aid in agent_ids if role_assignments.get(aid) == "werewolf"]
+                    elif winner == "villagers":
+                        winners = [aid for aid in agent_ids if role_assignments.get(aid) != "werewolf"]
+                break
+        
+        # Count actions per model
+        actions_by_model = {}
+        for event in events:
+            if event.get("event") == "action":
+                agent_id = event.get("agent_id")
+                if agent_id in agent_ids:
+                    action_type = event.get("action_type")
+                    actions_by_model[action_type] = actions_by_model.get(action_type, 0) + 1
+        
+        model_stats[model] = {
+            "agent_count": len(agent_ids),
+            "agent_ids": agent_ids,
+            "roles": roles_by_model,
+            "survivors": survivors,
+            "survivor_count": len(survivors),
+            "survival_rate": (len(survivors) / len(agent_ids) * 100) if agent_ids else 0,
+            "eliminated": eliminated,
+            "eliminated_count": len(eliminated),
+            "winners": winners,
+            "winner_count": len(winners),
+            "actions": actions_by_model,
+            "total_actions": sum(actions_by_model.values())
+        }
+    
+    return {
+        "models_used": list(set(agent_models.values())),
+        "model_stats": model_stats
+    }
+
+
+def calculate_response_time_metrics(events: List[Dict], agent_models: Dict[str, str]) -> Dict[str, Any]:
+    """Calculate response time metrics from DEBUG_agent_response events."""
+    response_times = []
+    response_times_by_agent = {}
+    response_times_by_phase = {}
+    response_times_by_model = {}
+    
+    for event in events:
+        if event.get("event") == "DEBUG_agent_response":
+            response_time = event.get("response_time_ms")
+            if response_time is not None:
+                agent_id = event.get("agent_id")
+                phase = event.get("phase", "unknown")
+                model = agent_models.get(agent_id, "unknown")
+                
+                response_times.append(response_time)
+                
+                # By agent
+                if agent_id not in response_times_by_agent:
+                    response_times_by_agent[agent_id] = []
+                response_times_by_agent[agent_id].append(response_time)
+                
+                # By phase
+                if phase not in response_times_by_phase:
+                    response_times_by_phase[phase] = []
+                response_times_by_phase[phase].append(response_time)
+                
+                # By model
+                if model not in response_times_by_model:
+                    response_times_by_model[model] = []
+                response_times_by_model[model].append(response_time)
+    
+    def calculate_stats(times: List[float]) -> Dict[str, float]:
+        if not times:
+            return {}
+        sorted_times = sorted(times)
+        return {
+            "mean": sum(times) / len(times),
+            "median": sorted_times[len(sorted_times) // 2],
+            "min": min(times),
+            "max": max(times),
+            "count": len(times)
+        }
+    
+    return {
+        "response_time_overall": calculate_stats(response_times),
+        "response_time_by_agent": {aid: calculate_stats(times) for aid, times in response_times_by_agent.items()},
+        "response_time_by_phase": {phase: calculate_stats(times) for phase, times in response_times_by_phase.items()},
+        "response_time_by_model": {model: calculate_stats(times) for model, times in response_times_by_model.items()}
+    }
+
+
+def calculate_voting_pattern_metrics(events: List[Dict], role_assignments: Dict[str, str]) -> Dict[str, Any]:
+    """Calculate voting pattern metrics."""
+    votes_by_round = {}
+    votes_by_agent = {}
+    werewolf_votes = []
+    villager_votes = []
+    
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "vote":
+            agent_id = event.get("agent_id")
+            target = event.get("target")
+            round_number = event.get("round_number", 1)
+            role = role_assignments.get(agent_id, "unknown")
+            
+            vote_record = {
+                "voter": agent_id,
+                "target": target,
+                "round": round_number,
+                "role": role
+            }
+            
+            # By round
+            if round_number not in votes_by_round:
+                votes_by_round[round_number] = []
+            votes_by_round[round_number].append(vote_record)
+            
+            # By agent
+            if agent_id not in votes_by_agent:
+                votes_by_agent[agent_id] = []
+            votes_by_agent[agent_id].append(vote_record)
+            
+            # By team
+            if role == "werewolf":
+                werewolf_votes.append(vote_record)
+            else:
+                villager_votes.append(vote_record)
+    
+    # Calculate voting coordination
+    def calculate_coordination(votes: List[Dict]) -> Dict[str, Any]:
+        if not votes:
+            return {}
+        
+        # Group by round
+        round_votes = {}
+        for vote in votes:
+            round_num = vote["round"]
+            if round_num not in round_votes:
+                round_votes[round_num] = []
+            round_votes[round_num].append(vote)
+        
+        # Calculate unanimity
+        unanimous_rounds = 0
+        split_rounds = 0
+        for round_num, round_vote_list in round_votes.items():
+            targets = [v["target"] for v in round_vote_list]
+            if len(set(targets)) == 1:
+                unanimous_rounds += 1
+            else:
+                split_rounds += 1
+        
+        total_rounds = len(round_votes)
+        return {
+            "total_votes": len(votes),
+            "rounds_voted": total_rounds,
+            "unanimous_rounds": unanimous_rounds,
+            "split_rounds": split_rounds,
+            "unanimity_rate": (unanimous_rounds / total_rounds * 100) if total_rounds > 0 else 0
+        }
+    
+    # Calculate werewolf coordination
+    werewolf_coordination = calculate_coordination(werewolf_votes)
+    
+    # Calculate most voted targets per round
+    voting_targets_by_round = {}
+    for round_num, round_votes in votes_by_round.items():
+        target_counts = {}
+        for vote in round_votes:
+            target = vote["target"]
+            target_counts[target] = target_counts.get(target, 0) + 1
+        voting_targets_by_round[round_num] = target_counts
+    
+    return {
+        "voting_coordination": {
+            "werewolf": werewolf_coordination,
+            "villager": calculate_coordination(villager_votes)
+        },
+        "votes_by_round": voting_targets_by_round,
+        "votes_by_agent": {aid: len(votes) for aid, votes in votes_by_agent.items()},
+        "total_votes": len(werewolf_votes) + len(villager_votes),
+        "werewolf_vote_count": len(werewolf_votes),
+        "villager_vote_count": len(villager_votes)
+    }
+
+
+def calculate_survival_metrics(events: List[Dict], role_assignments: Dict[str, str], final_alive: List[str], final_eliminated: List[str], total_rounds: int) -> Dict[str, Any]:
+    """Calculate survival metrics."""
+    # Track elimination order
+    elimination_order = []
+    elimination_by_round = {}
+    
+    for event in events:
+        if event.get("event") == "game_update":
+            eliminated = event.get("eliminated", [])
+            round_num = event.get("round", 0)
+            
+            if round_num not in elimination_by_round:
+                elimination_by_round[round_num] = []
+            
+            # Track elimination order
+            prev_eliminated = set()
+            for prev_event in events:
+                if prev_event.get("event") == "game_update" and prev_event.get("round", 0) < round_num:
+                    prev_eliminated.update(prev_event.get("eliminated", []))
+            
+            newly_eliminated = [aid for aid in eliminated if aid not in prev_eliminated]
+            for aid in newly_eliminated:
+                if aid not in elimination_order:
+                    elimination_order.append(aid)
+                    elimination_by_round[round_num].append(aid)
+    
+    # Calculate survival by role
+    survival_by_role = {}
+    for role in set(role_assignments.values()):
+        role_agents = [aid for aid, r in role_assignments.items() if r == role]
+        survivors = [aid for aid in role_agents if aid in final_alive]
+        eliminated = [aid for aid in role_agents if aid in final_eliminated]
+        
+        survival_by_role[role] = {
+            "total": len(role_agents),
+            "survivors": len(survivors),
+            "eliminated": len(eliminated),
+            "survival_rate": (len(survivors) / len(role_agents) * 100) if role_agents else 0,
+            "survivor_ids": survivors,
+            "eliminated_ids": eliminated
+        }
+    
+    # Calculate average survival rounds
+    survival_rounds_by_agent = {}
+    for agent_id in role_assignments.keys():
+        if agent_id in final_eliminated:
+            # Find when they were eliminated
+            eliminated_round = None
+            for round_num, eliminated in elimination_by_round.items():
+                if agent_id in eliminated:
+                    eliminated_round = round_num
+                    break
+            survival_rounds_by_agent[agent_id] = eliminated_round if eliminated_round else total_rounds
+        else:
+            survival_rounds_by_agent[agent_id] = total_rounds
+    
+    # Average survival rounds by role
+    avg_survival_by_role = {}
+    for role in set(role_assignments.values()):
+        role_agents = [aid for aid, r in role_assignments.items() if r == role]
+        role_survival_rounds = [survival_rounds_by_agent.get(aid, 0) for aid in role_agents]
+        if role_survival_rounds:
+            avg_survival_by_role[role] = sum(role_survival_rounds) / len(role_survival_rounds)
+        else:
+            avg_survival_by_role[role] = 0
+    
+    return {
+        "elimination_order": elimination_order,
+        "elimination_by_round": elimination_by_round,
+        "survival_by_role": survival_by_role,
+        "survival_rounds_by_agent": survival_rounds_by_agent,
+        "average_survival_rounds_by_role": avg_survival_by_role,
+        "final_survivor_count": len(final_alive),
+        "final_eliminated_count": len(final_eliminated)
+    }
+
+
+def calculate_round_progression_metrics(events: List[Dict], role_assignments: Dict[str, str]) -> Dict[str, Any]:
+    """Calculate round-by-round progression metrics."""
+    round_states = {}
+    
+    for event in events:
+        if event.get("event") == "game_update":
+            round_num = event.get("round", 0)
+            phase = event.get("phase", "unknown")
+            alive = event.get("alive", [])
+            eliminated = event.get("eliminated", [])
+            
+            if round_num not in round_states:
+                round_states[round_num] = {
+                    "round": round_num,
+                    "phases": [],
+                    "alive_count": [],
+                    "eliminated_count": [],
+                    "werewolf_count": [],
+                    "villager_count": []
+                }
+            
+            # Count roles
+            werewolf_count = sum(1 for aid in alive if role_assignments.get(aid) == "werewolf")
+            villager_count = sum(1 for aid in alive if role_assignments.get(aid) != "werewolf")
+            
+            round_states[round_num]["phases"].append(phase)
+            round_states[round_num]["alive_count"].append(len(alive))
+            round_states[round_num]["eliminated_count"].append(len(eliminated))
+            round_states[round_num]["werewolf_count"].append(werewolf_count)
+            round_states[round_num]["villager_count"].append(villager_count)
+    
+    # Calculate game momentum (which side is gaining/losing)
+    momentum = []
+    prev_werewolf_count = None
+    prev_villager_count = None
+    
+    for round_num in sorted(round_states.keys()):
+        state = round_states[round_num]
+        werewolf_count = state["werewolf_count"][-1] if state["werewolf_count"] else 0
+        villager_count = state["villager_count"][-1] if state["villager_count"] else 0
+        
+        if prev_werewolf_count is not None:
+            werewolf_change = werewolf_count - prev_werewolf_count
+            villager_change = villager_count - prev_villager_count
+            
+            momentum.append({
+                "round": round_num,
+                "werewolf_change": werewolf_change,
+                "villager_change": villager_change,
+                "werewolf_advantage": werewolf_count - villager_count,
+                "momentum": "werewolves" if werewolf_change > 0 or villager_change < 0 else "villagers" if villager_change > 0 or werewolf_change < 0 else "neutral"
+            })
+        
+        prev_werewolf_count = werewolf_count
+        prev_villager_count = villager_count
+    
+    return {
+        "round_by_round_state": round_states,
+        "game_momentum": momentum
+    }
+
+
+def calculate_enhanced_role_metrics(events: List[Dict], role_assignments: Dict[str, str], eliminated_agents: List[str]) -> Dict[str, Any]:
+    """Calculate enhanced role-specific metrics."""
+    metrics = {}
+    
+    # Seer-specific: investigation effectiveness
+    seer_agents = [aid for aid, role in role_assignments.items() if role == "seer"]
+    seer_investigations = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "investigate":
+            agent_id = event.get("agent_id")
+            if agent_id in seer_agents:
+                investigation_result = event.get("investigation_result", {})
+                target = event.get("target")
+                seer_investigations.append({
+                    "seer_id": agent_id,
+                    "target": target,
+                    "is_werewolf": investigation_result.get("is_werewolf", False),
+                    "target_eliminated": target in eliminated_agents,
+                    "round": event.get("round_number", 1)
+                })
+    
+    if seer_investigations:
+        werewolf_investigations = [inv for inv in seer_investigations if inv["is_werewolf"]]
+        metrics["seer_investigation_effectiveness"] = {
+            "total_investigations": len(seer_investigations),
+            "werewolf_discoveries": len(werewolf_investigations),
+            "werewolf_discovery_rate": (len(werewolf_investigations) / len(seer_investigations) * 100) if seer_investigations else 0,
+            "targets_eliminated_after_investigation": len([inv for inv in seer_investigations if inv["target_eliminated"]])
+        }
+    
+    # Doctor-specific: protection patterns
+    doctor_agents = [aid for aid, role in role_assignments.items() if role == "doctor"]
+    doctor_protections = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "protect":
+            agent_id = event.get("agent_id")
+            if agent_id in doctor_agents:
+                target = event.get("target")
+                doctor_protections.append({
+                    "doctor_id": agent_id,
+                    "target": target,
+                    "target_role": role_assignments.get(target, "unknown"),
+                    "target_survived": target not in eliminated_agents,
+                    "round": event.get("round_number", 1)
+                })
+    
+    if doctor_protections:
+        # Protection patterns
+        self_protections = [p for p in doctor_protections if p["doctor_id"] == p["target"]]
+        seer_protections = [p for p in doctor_protections if p["target_role"] == "seer"]
+        successful_protections = [p for p in doctor_protections if p["target_survived"]]
+        
+        metrics["doctor_protection_patterns"] = {
+            "total_protections": len(doctor_protections),
+            "self_protections": len(self_protections),
+            "seer_protections": len(seer_protections),
+            "successful_protections": len(successful_protections),
+            "success_rate": (len(successful_protections) / len(doctor_protections) * 100) if doctor_protections else 0
+        }
+    
+    # Werewolf-specific: targeting patterns
+    werewolf_agents = [aid for aid, role in role_assignments.items() if role == "werewolf"]
+    werewolf_kills = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "kill":
+            agent_id = event.get("agent_id")
+            if agent_id in werewolf_agents:
+                target = event.get("target")
+                werewolf_kills.append({
+                    "werewolf_id": agent_id,
+                    "target": target,
+                    "target_role": role_assignments.get(target, "unknown"),
+                    "target_eliminated": target in eliminated_agents,
+                    "round": event.get("round_number", 1)
+                })
+    
+    if werewolf_kills:
+        # Target role distribution
+        target_roles = {}
+        for kill in werewolf_kills:
+            role = kill["target_role"]
+            target_roles[role] = target_roles.get(role, 0) + 1
+        
+        # Key role targeting (Seer, Doctor)
+        key_role_targets = [k for k in werewolf_kills if k["target_role"] in ["seer", "doctor"]]
+        
+        metrics["werewolf_targeting_patterns"] = {
+            "total_kill_attempts": len(werewolf_kills),
+            "successful_kills": len([k for k in werewolf_kills if k["target_eliminated"]]),
+            "target_role_distribution": target_roles,
+            "key_role_targets": len(key_role_targets),
+            "key_role_target_rate": (len(key_role_targets) / len(werewolf_kills) * 100) if werewolf_kills else 0
+        }
+    
+    # Villager-specific: accusation accuracy
+    villager_agents = [aid for aid, role in role_assignments.items() if role == "villager"]
+    villager_accusations = []
+    for event in events:
+        if event.get("event") == "action" and event.get("action_type") == "discuss":
+            agent_id = event.get("agent_id")
+            discussion_type = event.get("discussion_action_type")
+            if agent_id in villager_agents and discussion_type == "accuse":
+                target = event.get("target")
+                villager_accusations.append({
+                    "villager_id": agent_id,
+                    "target": target,
+                    "target_is_werewolf": role_assignments.get(target) == "werewolf",
+                    "round": event.get("round_number", 1)
+                })
+    
+    if villager_accusations:
+        correct_accusations = [a for a in villager_accusations if a["target_is_werewolf"]]
+        metrics["villager_accusation_accuracy"] = {
+            "total_accusations": len(villager_accusations),
+            "correct_accusations": len(correct_accusations),
+            "accuracy_rate": (len(correct_accusations) / len(villager_accusations) * 100) if villager_accusations else 0
+        }
+    
+    return metrics
 
 
 def calculate_rule_compliance_metrics(events: List[Dict], role_assignments: Dict[str, str]) -> Dict[str, Any]:

@@ -68,6 +68,7 @@ class AgentProfile(BaseModel):
     is_alive: bool = Field(True, description="Whether the agent is still in the game")
     last_action: Optional[WerewolfAction] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    model: Optional[str] = Field(None, description="LLM model used by this agent (if applicable)")
 
 
 class AgentResponse(BaseModel):

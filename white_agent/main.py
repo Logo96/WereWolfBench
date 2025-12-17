@@ -75,7 +75,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         if not task_data:
             error_response = {"error": "Failed to parse task data from Green Agent"}
             response_message = new_agent_text_message(json.dumps(error_response))
-            event_queue.enqueue_event(response_message)
+            await event_queue.enqueue_event(response_message)
             return
 
         try:
@@ -88,12 +88,12 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
 
             # Send response
             response_message = new_agent_text_message(json.dumps(result))
-            event_queue.enqueue_event(response_message)
+            await event_queue.enqueue_event(response_message)
 
         except Exception as e:
             logger.error(f"Error executing task: {e}", exc_info=True)
             error_message = new_agent_text_message(json.dumps({"error": str(e)}))
-            event_queue.enqueue_event(error_message)
+            await event_queue.enqueue_event(error_message)
 
     async def _handle_werewolf_action(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -129,8 +129,20 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         llm_response = await llm_handler.get_response(prompt)
         response_time = (time.time() - start_time) * 1000
         
-        logger.info(f"LLM response received in {response_time:.2f}ms")
-        logger.debug(f"Raw LLM response: {llm_response}")
+        # Store raw LLM text BEFORE formatting (for logging)
+        raw_llm_text = llm_response
+        
+        # Check if fallback was used
+        is_fallback = llm_response.startswith("[FALLBACK]")
+        if is_fallback:
+            logger.warning(f"⚠️  FALLBACK response used (LLM unavailable) - response time: {response_time:.2f}ms")
+            logger.warning("   Check: 1) LiteLLM installed? 2) OPENAI_API_KEY set? 3) Model name valid?")
+            logger.warning(f"   Fallback response: {llm_response[:300]}...")
+        else:
+            logger.info(f"✅ REAL LLM response received in {response_time:.2f}ms")
+            logger.info(f"   Raw LLM response (first 500 chars): {llm_response[:500]}...")
+            if len(llm_response) > 500:
+                logger.info(f"   ... (full response length: {len(llm_response)} chars)")
         
         # Parse LLM response into action format
         action_response = ResponseFormatter.format_action_response(
@@ -140,6 +152,12 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
             alive_agents=alive_agents,
             game_state=game_state
         )
+        
+        # Store raw LLM text in action_response metadata for logging
+        # This will be logged by the Green Agent
+        if "metadata" not in action_response.get("action", {}):
+            action_response["action"]["metadata"] = {}
+        action_response["action"]["metadata"]["raw_llm_text"] = raw_llm_text[:1000]  # Store first 1000 chars
         
         return action_response
 

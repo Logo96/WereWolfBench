@@ -198,10 +198,8 @@ class GameEngine:
         )
         game_state.round_history.append(round_record)
 
-        # Advance to next phase
-        self.state_manager.advance_round(game_state)
-
-        # Check for game end
+        # Check for game end BEFORE advancing (especially important for max_rounds check)
+        # This ensures we check after completing DAY_VOTING, not after starting the next round
         game_ended, winner = self.rules_validator.check_game_end_condition(game_state)
         if game_ended:
             game_state.status = GameStatus.COMPLETED
@@ -209,6 +207,10 @@ class GameEngine:
             game_state.winner = winner
             game_state.completed_at = datetime.utcnow()
             logger.info(f"Game {game_state.game_id} ended. Winner: {winner}")
+            return game_state, eliminated
+
+        # Advance to next phase (only if game hasn't ended)
+        self.state_manager.advance_round(game_state)
 
         return game_state, eliminated
 

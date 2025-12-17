@@ -51,7 +51,7 @@ class ResponseFormatter:
         Format LLM response into valid AgentResponse format.
         
         Args:
-            llm_response: Raw LLM response text
+            llm_response: Raw LLM response text (may contain [FALLBACK] prefix)
             phase: Current game phase
             your_role: Agent's assigned role
             alive_agents: List of alive agent IDs
@@ -60,6 +60,12 @@ class ResponseFormatter:
         Returns:
             Formatted AgentResponse dictionary
         """
+        # Check if this is a fallback response
+        is_fallback = llm_response.startswith("[FALLBACK]")
+        if is_fallback:
+            llm_response = llm_response[11:]  # Remove "[FALLBACK]" prefix
+            logger.warning("Processing fallback response (LLM unavailable)")
+        
         # Parse the LLM response
         parsed = ResponseFormatter._parse_llm_response(llm_response)
         
@@ -92,7 +98,7 @@ class ResponseFormatter:
             "target_agent_id": target,
             "reasoning": reasoning,
             "confidence": ResponseFormatter._calculate_confidence(parsed),
-            "metadata": {"source": "llm"},
+            "metadata": {"source": "fallback" if is_fallback else "llm"},
         }
         
         # Add discussion-specific fields if applicable

@@ -46,10 +46,16 @@ logger = logging.getLogger(__name__)
 class GameLogger:
     """Handles game data storage with both in-memory cache and file persistence."""
 
-    def __init__(self, log_dir: str = "game_logs"):
-        """Initialize the game logger."""
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True)
+    def __init__(self, log_dir: str = "game_logs", subfolder: str = "baseline"):
+        """
+        Initialize the game logger.
+        
+        Args:
+            log_dir: Base directory for logs (default: "game_logs")
+            subfolder: Subfolder to use ("baseline" or "optimized", default: "baseline")
+        """
+        self.log_dir = Path(log_dir) / subfolder
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.active_games: Dict[str, GameState] = {}
         self.game_agents: Dict[str, List[AgentProfile]] = {}
@@ -101,7 +107,8 @@ class GameLogger:
                     "id": agent.agent_id,
                     "name": agent.name,
                     "url": str(agent.agent_url),
-                    "role": agent.role.value if agent.role else None
+                    "role": agent.role.value if agent.role else None,
+                    "model": agent.model  # LLM model used by this agent
                 }
                 for agent in agents
             ]
@@ -408,7 +415,7 @@ class GameLogger:
         This enables full visibility into what context each agent receives.
         """
         self._write_game_event(game_id, {
-            "event": "agent_prompt",
+            "event": "DEBUG_agent_prompt",
             "timestamp": datetime.utcnow().isoformat(),
             "game_id": game_id,
             "agent_id": agent_id,
@@ -435,7 +442,7 @@ class GameLogger:
         This captures exactly what the LLM returned before any parsing.
         """
         self._write_game_event(game_id, {
-            "event": "agent_response",
+            "event": "DEBUG_agent_response",
             "timestamp": datetime.utcnow().isoformat(),
             "game_id": game_id,
             "agent_id": agent_id,
@@ -468,7 +475,7 @@ class GameLogger:
         serialized_action = _serialize_for_json(parsed_action)
         
         self._write_game_event(game_id, {
-            "event": "agent_action_detail",
+            "event": "DEBUG_agent_action_detail",
             "timestamp": datetime.utcnow().isoformat(),
             "game_id": game_id,
             "agent_id": agent_id,
@@ -491,7 +498,7 @@ class GameLogger:
         Log errors that occur during agent communication or response parsing.
         """
         self._write_game_event(game_id, {
-            "event": "agent_error",
+            "event": "DEBUG_agent_error",
             "timestamp": datetime.utcnow().isoformat(),
             "game_id": game_id,
             "agent_id": agent_id,
@@ -519,7 +526,7 @@ class GameLogger:
         
         prompts = [
             event for event in game_log.get("events", [])
-            if event.get("event") == "agent_prompt"
+            if event.get("event") == "DEBUG_agent_prompt"
         ]
         
         if agent_id:
@@ -544,7 +551,7 @@ class GameLogger:
         
         responses = [
             event for event in game_log.get("events", [])
-            if event.get("event") == "agent_response"
+            if event.get("event") == "DEBUG_agent_response"
         ]
         
         if agent_id:
@@ -560,7 +567,7 @@ class GameLogger:
         
         return [
             event for event in game_log.get("events", [])
-            if event.get("event") == "agent_error"
+            if event.get("event") == "DEBUG_agent_error"
         ]
 
     def get_decision_trace(self, game_id: str, agent_id: str, round_number: int = None) -> List[Dict[str, Any]]:
@@ -578,7 +585,7 @@ class GameLogger:
         # Filter for this agent's detailed action events
         traces = [
             event for event in events
-            if event.get("event") == "agent_action_detail"
+            if event.get("event") == "DEBUG_agent_action_detail"
             and event.get("agent_id") == agent_id
         ]
         

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Test script for mixed White Agents (2 real LLM-powered + 6 dummy agents).
+Run a full Werewolf game with all real LLM-powered White Agents.
 
 This script:
 1. Starts the Green Agent (orchestrator)
-2. Starts 2 real White Agents (LLM-powered via LiteLLM)
-3. Starts 6 dummy agents (deterministic responses)
-4. Runs a complete game
-5. Shows results and logs
+2. Starts 8 real White Agents (all LLM-powered via LiteLLM)
+3. Runs a complete game with high max_rounds (no artificial limit)
+4. Stores metrics to a JSON file
 """
 
 import argparse
@@ -29,13 +28,10 @@ ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from app.testing.dummy_agents import DummyAgentServer
-
 
 # Port assignments
 GREEN_AGENT_PORT = 8080
 WHITE_AGENT_START_PORT = 9002
-DUMMY_AGENT_START_PORT = 9500
 
 
 class AgentProcess:
@@ -54,14 +50,14 @@ class AgentProcess:
         
         print(f"Starting {self.name}...")
         if show_output:
-            # Show output in terminal (for Green Agent debugging)
+            # Show output in terminal (for debugging)
             self.process = subprocess.Popen(
                 self.command,
                 env=full_env,
                 text=True
             )
         else:
-            # Capture output (for White Agents and Dummy Agents)
+            # Capture output
             self.process = subprocess.Popen(
                 self.command,
                 env=full_env,
@@ -70,6 +66,21 @@ class AgentProcess:
                 text=True
             )
         print(f"  {self.name} started (PID: {self.process.pid})")
+    
+    def read_output(self) -> tuple[str, str]:
+        """Read captured stdout and stderr."""
+        stdout, stderr = "", ""
+        if self.process and self.process.stdout:
+            try:
+                stdout = self.process.stdout.read()
+            except:
+                pass
+        if self.process and self.process.stderr:
+            try:
+                stderr = self.process.stderr.read()
+            except:
+                pass
+        return stdout, stderr
     
     def stop(self):
         """Stop the agent process."""
@@ -95,14 +106,14 @@ async def check_agent_health(url: str, timeout: float = 5.0) -> bool:
             except Exception:
                 pass
             
-            # Fallback to root endpoint (for dummy agents)
+            # Fallback to root endpoint
             response = await client.get(f"{url}/")
             return response.status_code == 200
     except Exception:
         return False
 
 
-async def wait_for_agents(agent_urls: List[str], max_wait: int = 30):
+async def wait_for_agents(agent_urls: List[str], max_wait: int = 60):
     """Wait for all agents to be ready."""
     print("\nWaiting for agents to be ready...")
     start_time = time.time()
@@ -169,19 +180,32 @@ async def send_jsonrpc(
     return json.loads(text_parts[0])
 
 
-async def run_test(args: argparse.Namespace):
-    """Run the mixed agent test."""
+def save_metrics(game_id: str, metrics: dict, output_dir: str = "metrics", subfolder: str = "baseline"):
+    """Save game metrics to a JSON file."""
+    output_path = Path(output_dir) / subfolder
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    metrics_file = output_path / f"game_{game_id}_metrics.json"
+    
+    with open(metrics_file, "w") as f:
+        json.dump(metrics, f, indent=2)
+    
+    print(f"\n💾 Metrics saved to: {metrics_file}")
+    return metrics_file
+
+
+async def run_full_game(args: argparse.Namespace):
+    """Run a full game with all real agents."""
     processes: List[AgentProcess] = []
-    dummy_servers: List[DummyAgentServer] = []
     
     # Track all agent URLs
     agent_urls: List[str] = []
     
     try:
         # 1. Start Green Agent
-        print("=" * 60)
+        print("=" * 70)
         print("Starting Green Agent (Orchestrator)")
-        print("=" * 60)
+        print("=" * 70)
         green_agent = AgentProcess(
             name="Green Agent",
             command=[sys.executable, "-m", "app.main"],
@@ -190,17 +214,19 @@ async def run_test(args: argparse.Namespace):
                 "PORT": str(GREEN_AGENT_PORT),
             }
         )
-        green_agent.start(show_output=True)  # Show Green Agent output in terminal
+        green_agent.start(show_output=args.show_green_output)
         processes.append(green_agent)
         green_url = f"http://127.0.0.1:{GREEN_AGENT_PORT}"
         
         # Wait a bit for Green Agent to start
         await asyncio.sleep(2)
         
-        # 2. Start 2 Real White Agents
-        print("\n" + "=" * 60)
-        print("Starting 2 Real White Agents (LLM-powered)")
-        print("=" * 60)
+        # 2. Start 8 Real White Agents (4 GPT-5.2 + 4 GPT-5-mini)
+        print("\n" + "=" * 70)
+        print("Starting 8 Real White Agents (LLM-powered)")
+        print("=" * 70)
+        print("  - 4 agents using GPT-5.2")
+        print("  - 4 agents using GPT-5-mini")
         
         if not os.getenv("OPENAI_API_KEY"):
             print("\n⚠️  WARNING: OPENAI_API_KEY not set!")
@@ -208,69 +234,68 @@ async def run_test(args: argparse.Namespace):
             print("   Set OPENAI_API_KEY to use real LLM:\n")
             print("   export OPENAI_API_KEY='your-key-here'\n")
         
-        for i in range(2):
+        # Model assignments: first 4 use GPT-5.2, last 4 use GPT-5-mini
+        GPT_5_2_MODEL = "gpt-5.2"
+        GPT_5_MINI_MODEL = "gpt-5-mini"
+        
+        for i in range(8):
             port = WHITE_AGENT_START_PORT + i
+            # First 4 agents (0-3) use GPT-5.2, last 4 (4-7) use GPT-5-mini
+            model = GPT_5_2_MODEL if i < 4 else GPT_5_MINI_MODEL
+            agent_name = f"White Agent {i+1} ({model})"
+            
             white_agent = AgentProcess(
-                name=f"White Agent {i+1}",
+                name=agent_name,
                 command=[sys.executable, "-m", "white_agent.main"],
                 env={
                     "HOST": "0.0.0.0",
                     "PORT": str(port),
                     "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-                    "LLM_MODEL": args.llm_model,
+                    "LLM_MODEL": model,
                 }
             )
             white_agent.start(show_output=args.show_agent_output)
             processes.append(white_agent)
             agent_urls.append(f"http://127.0.0.1:{port}")
         
-        # 3. Start 6 Dummy Agents
-        print("\n" + "=" * 60)
-        print("Starting 6 Dummy Agents")
-        print("=" * 60)
-        
-        for i in range(6):
-            port = DUMMY_AGENT_START_PORT + i
-            dummy_server = DummyAgentServer(
-                agent_name=f"dummy_agent_{i}",
-                host="127.0.0.1",
-                port=port
-            )
-            dummy_servers.append(dummy_server)
-            agent_urls.append(dummy_server.url)
-        
-        # Start dummy servers
-        await asyncio.gather(*(server.start() for server in dummy_servers))
-        print(f"Started {len(dummy_servers)} dummy agents")
-        
-        # 4. Wait for all agents to be ready
-        print("\n" + "=" * 60)
+        # 3. Wait for all agents to be ready
+        print("\n" + "=" * 70)
         print("Waiting for Agents")
-        print("=" * 60)
+        print("=" * 70)
         
-        if not await wait_for_agents([green_url] + agent_urls, max_wait=30):
+        if not await wait_for_agents([green_url] + agent_urls, max_wait=60):
             print("\n❌ Some agents failed to start. Check logs above.")
             return
         
-        # 5. Start the game
-        print("\n" + "=" * 60)
+        # 4. Start the game
+        print("\n" + "=" * 70)
         print("Starting Game")
-        print("=" * 60)
+        print("=" * 70)
         
+        # No max_rounds limit - game will run to natural completion
         game_config = {
             "num_werewolves": 2,
             "has_seer": True,
             "has_doctor": True,
             "has_hunter": False,
             "has_witch": False,
-            "max_rounds": 2,  # Cost-saving limit
+            "max_rounds": None,  # No limit - game runs until werewolves or villagers win
+            "discussion_time_limit": 300,
+            "voting_time_limit": 60,
         }
         
         async with httpx.AsyncClient() as client:
-            print(f"Starting game with {len(agent_urls)} agents...")
-            print(f"  - 2 Real White Agents (LLM-powered)")
-            print(f"  - 6 Dummy Agents")
+            print(f"Starting game with {len(agent_urls)} real White Agents...")
+            print(f"  - Agents 1-4: GPT-5.2")
+            print(f"  - Agents 5-8: GPT-5-mini")
             print(f"\nConfig: {json.dumps(game_config, indent=2)}")
+            print(f"\n✓ No max_rounds limit - game will run to natural completion\n")
+            
+            # Create model mapping for tracking
+            agent_models = {}
+            for i, url in enumerate(agent_urls):
+                model = GPT_5_2_MODEL if i < 4 else GPT_5_MINI_MODEL
+                agent_models[url] = model
             
             try:
                 start_result = await send_jsonrpc(
@@ -279,7 +304,8 @@ async def run_test(args: argparse.Namespace):
                     "start_game",
                     {
                         "agent_urls": agent_urls,
-                        "config": game_config
+                        "config": game_config,
+                        "agent_models": agent_models  # Pass model mapping
                     }
                 )
             except RuntimeError as e:
@@ -294,13 +320,14 @@ async def run_test(args: argparse.Namespace):
             
             print(f"\n✅ Game started! Game ID: {game_id}")
             
-            # 6. Monitor game progress
-            print("\n" + "=" * 60)
+            # 5. Monitor game progress
+            print("\n" + "=" * 70)
             print("Game Progress")
-            print("=" * 60)
+            print("=" * 70)
             
             completed = False
             last_status = None
+            start_time = time.time()
             
             while not completed:
                 try:
@@ -319,106 +346,137 @@ async def run_test(args: argparse.Namespace):
                 phase = status_result.get("phase")
                 round_number = status_result.get("round_number")
                 alive = status_result.get("alive_agents", [])
+                winner = status_result.get("winner")
                 
                 # Only print when status changes
                 current_status = f"{status}:{phase}:{round_number}"
                 if current_status != last_status:
+                    elapsed = time.time() - start_time
                     print(
                         f"[Round {round_number}] Status: {status} | "
-                        f"Phase: {phase} | Alive: {len(alive)}"
+                        f"Phase: {phase} | Alive: {len(alive)} | "
+                        f"Elapsed: {elapsed:.1f}s"
                     )
                     last_status = current_status
                 
                 if status == "completed":
                     completed = True
-                    winner = status_result.get("winner")
+                    elapsed = time.time() - start_time
                     print(f"\n🎉 Game Completed!")
-                    print(f"   Winner: {winner}")
+                    print(f"   Winner: {winner if winner else 'None (max rounds reached)'}")
                     print(f"   Total Rounds: {round_number}")
                     print(f"   Surviving Agents: {len(alive)}")
+                    print(f"   Total Time: {elapsed:.1f}s")
                     
-                    # Show log file location
-                    log_file = f"game_logs/baseline/game_{game_id}.jsonl"
-                    print(f"\n📋 Game log: {log_file}")
+                    # 6. Extract and save metrics
+                    print("\n" + "=" * 70)
+                    print("Extracting Metrics")
+                    print("=" * 70)
                     
-                    # Show some stats
-                    if Path(log_file).exists():
-                        with open(log_file) as f:
-                            events = [json.loads(line) for line in f if line.strip()]
+                    log_file = Path(f"game_logs/baseline/game_{game_id}.jsonl")
+                    if log_file.exists():
+                        print(f"📋 Game log: {log_file}")
                         
-                        prompts = sum(1 for e in events if e.get("event") == "DEBUG_agent_prompt")
-                        responses = sum(1 for e in events if e.get("event") == "DEBUG_agent_response")
-                        actions = sum(1 for e in events if e.get("event") == "action")
-                        errors = sum(1 for e in events if e.get("event") == "DEBUG_agent_error")
-                        
-                        print(f"\n📊 Game Statistics:")
-                        print(f"   Prompts sent: {prompts}")
-                        print(f"   Responses received: {responses}")
-                        print(f"   Actions processed: {actions}")
-                        print(f"   Errors: {errors}")
-                        
-                        # Show which agents were real vs dummy
-                        print(f"\n🤖 Agent Types:")
-                        print(f"   Real White Agents (LLM): agent_0, agent_1")
-                        print(f"   Dummy Agents: agent_2 through agent_7")
-                else:
-                    await asyncio.sleep(args.poll_interval)
-        
+                        try:
+                            from extract_game_metrics import extract_game_metrics
+                            metrics = extract_game_metrics(str(log_file))
+                            
+                            # Save metrics to file
+                            metrics_file = save_metrics(game_id, metrics, args.metrics_dir)
+                            
+                            # Print summary
+                            print("\n" + "=" * 70)
+                            print("Metrics Summary")
+                            print("=" * 70)
+                            print(f"Winner: {metrics.get('winner', 'N/A')}")
+                            print(f"Total Rounds: {metrics.get('total_rounds', 'N/A')}")
+                            print(f"Final Alive: {len(metrics.get('final_alive', []))}")
+                            print(f"Final Eliminated: {len(metrics.get('final_eliminated', []))}")
+                            print(f"\nAction Counts:")
+                            for action_type, count in metrics.get('action_counts', {}).items():
+                                print(f"  {action_type}: {count}")
+                            print(f"\nDiscussion Actions: {metrics.get('discussion_actions_count', 0)}")
+                            print(f"Investigation Actions: {metrics.get('investigation_actions_count', 0)}")
+                            print(f"\nRule Compliance: {metrics.get('rule_compliance_percentage', 0):.1f}%")
+                            print(f"  Valid Actions: {metrics.get('valid_actions', 0)}/{metrics.get('total_actions', 0)}")
+                            
+                            # Show White Agent logs if not already shown
+                            if not args.show_agent_output:
+                                print("\n" + "=" * 70)
+                                print("White Agent Logs (from captured output)")
+                                print("=" * 70)
+                                print("(Run with --show-agent-output to see logs in real-time)")
+                                for agent in processes:
+                                    if "White Agent" in agent.name:
+                                        stdout, stderr = agent.read_output()
+                                        if stdout or stderr:
+                                            print(f"\n--- {agent.name} ---")
+                                            if stdout:
+                                                print("STDOUT:")
+                                                print(stdout[-2000:] if len(stdout) > 2000 else stdout)  # Last 2000 chars
+                                            if stderr:
+                                                print("STDERR:")
+                                                print(stderr[-2000:] if len(stderr) > 2000 else stderr)
+                            
+                        except Exception as e:
+                            print(f"\n⚠️  Failed to extract metrics: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print(f"\n⚠️  Game log not found: {log_file}")
+                    
+                    break
+                
+                await asyncio.sleep(args.poll_interval)
+    
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted by user")
-    except Exception as e:
-        print(f"\n\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
-        # Cleanup
-        print("\n" + "=" * 60)
+        # Cleanup: Stop all processes
+        print("\n" + "=" * 70)
         print("Cleaning Up")
-        print("=" * 60)
-        
-        # Stop dummy servers
-        if dummy_servers:
-            await asyncio.gather(
-                *(server.close() for server in dummy_servers),
-                return_exceptions=True
-            )
-        
-        # Stop processes
-        for process in processes:
+        print("=" * 70)
+        for process in reversed(processes):
             process.stop()
-        
-        print("\n✅ Cleanup complete")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test Werewolf game with 2 real White Agents + 6 dummy agents"
+        description="Run a full Werewolf game with all real LLM-powered agents"
     )
     parser.add_argument(
         "--llm-model",
-        default="gpt-4o-mini",
-        help="LLM model to use for White Agents (default: gpt-4o-mini)"
+        type=str,
+        default=None,
+        help="[DEPRECATED] Model assignment is now fixed: 4 GPT-5.2 + 4 GPT-5-mini"
     )
     parser.add_argument(
         "--poll-interval",
         type=float,
         default=2.0,
-        help="Seconds between status polls (default: 2.0)"
+        help="Interval between status checks in seconds (default: 2.0)"
     )
     parser.add_argument(
         "--show-agent-output",
         action="store_true",
-        help="Show output from all agents (not just Green Agent)"
+        help="Show White Agent output in terminal (verbose)"
+    )
+    parser.add_argument(
+        "--show-green-output",
+        action="store_true",
+        help="Show Green Agent output in terminal (verbose)"
+    )
+    parser.add_argument(
+        "--metrics-dir",
+        type=str,
+        default="metrics",
+        help="Base directory to save metrics JSON files (default: metrics, saves to metrics/baseline/)"
     )
     
     args = parser.parse_args()
     
-    # Check for API key
-    if not os.getenv("OPENAI_API_KEY"):
-        print("⚠️  Note: OPENAI_API_KEY not set. White Agents will use fallback responses.")
-        print("   Set it to use real LLM: export OPENAI_API_KEY='your-key'\n")
-    
-    asyncio.run(run_test(args))
+    # Run the game
+    asyncio.run(run_full_game(args))
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 # Cost-saving limits
-MAX_GAME_ROUNDS = 2  # Maximum game rounds before forced termination
+# MAX_GAME_ROUNDS removed - games can now run to completion without round limits
 MAX_DISCUSSION_TURNS = 1  # Each agent speaks once per discussion round
 
 
@@ -51,7 +51,11 @@ class GameOrchestrator:
         self.storage = storage
         self.engine = GameEngine()
         self.agent_clients: Dict[str, A2AClient] = {}
-        self.httpx_client = httpx_client or httpx.AsyncClient()
+        # Set high timeout for LLM calls (5 minutes) - LLM responses can take time
+        # Connect timeout: 60 seconds (for slow network connections)
+        # Total timeout: 300 seconds (5 minutes for full LLM response)
+        timeout = httpx.Timeout(300.0, connect=60.0)
+        self.httpx_client = httpx_client or httpx.AsyncClient(timeout=timeout)
         self._owns_httpx_client = httpx_client is None
         
         # Track discussion context for sequential discussion
@@ -63,7 +67,8 @@ class GameOrchestrator:
     async def start_game(
         self,
         agent_urls: List[str],
-        config: Optional[GameConfig] = None
+        config: Optional[GameConfig] = None,
+        agent_models: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Start a new Werewolf game with the specified agents.
@@ -71,14 +76,15 @@ class GameOrchestrator:
         Args:
             agent_urls: List of A2A-compliant agent URLs
             config: Optional game configuration
+            agent_models: Optional mapping of agent_url -> model_name for tracking LLM models
 
         Returns:
             Game ID of the created game
         """
-        # Apply cost-saving limits to config
+        # Initialize config if needed
         if config is None:
             config = GameConfig()
-        config.max_rounds = min(config.max_rounds, MAX_GAME_ROUNDS)
+        # max_rounds is now optional (None = no limit)
         
         game_state = self.engine.create_game(agent_urls, config)
 
@@ -86,12 +92,18 @@ class GameOrchestrator:
         for i, url in enumerate(agent_urls):
             agent_id = game_state.agent_ids[i]
             role = AgentRole(game_state.role_assignments[agent_id])
+            
+            # Get model information if provided
+            model = None
+            if agent_models:
+                model = agent_models.get(url)
 
             agent = AgentProfile(
                 agent_id=agent_id,
                 agent_url=url,
                 name=f"Agent {i+1}",
-                role=role
+                role=role,
+                model=model
             )
             agents.append(agent)
             self.agent_clients[agent_id] = A2AClient(
@@ -128,9 +140,9 @@ class GameOrchestrator:
                 if not game_state or game_state.status == GameStatus.COMPLETED:
                     break
                 
-                # Check max rounds limit (cost saving)
-                if game_state.round_number > MAX_GAME_ROUNDS:
-                    logger.info(f"Game {game_id} reached max rounds limit ({MAX_GAME_ROUNDS})")
+                # Check max rounds limit (if configured)
+                if game_state.config.max_rounds is not None and game_state.round_number > game_state.config.max_rounds:
+                    logger.info(f"Game {game_id} reached max rounds limit ({game_state.config.max_rounds})")
                     game_state = self._force_game_end(game_state)
                     self.storage.save_game(game_state, force_log=True)
                     await self._finalize_game(game_id)
@@ -172,23 +184,14 @@ class GameOrchestrator:
 
     def _force_game_end(self, game_state: GameState) -> GameState:
         """Force game to end when max rounds reached."""
-        # Determine winner based on remaining players
-        werewolf_count = sum(
-            1 for aid in game_state.alive_agent_ids
-            if game_state.role_assignments.get(aid) == AgentRole.WEREWOLF.value
-        )
-        villager_count = len(game_state.alive_agent_ids) - werewolf_count
-        
-        if werewolf_count >= villager_count:
-            game_state.winner = "werewolves"
-        else:
-            game_state.winner = "villagers"
+        # No winner declared when max rounds reached - game didn't naturally conclude
+        game_state.winner = None
         
         game_state.status = GameStatus.COMPLETED
         game_state.phase = GamePhase.GAME_OVER
         game_state.completed_at = datetime.utcnow()
         
-        logger.info(f"Game {game_state.game_id} force-ended at round {game_state.round_number}. Winner: {game_state.winner}")
+        logger.info(f"Game {game_state.game_id} force-ended at round {game_state.round_number}. No winner (max rounds reached).")
         return game_state
 
     async def _run_phase(self, game_id: str):
@@ -423,56 +426,111 @@ class GameOrchestrator:
                 f"Agent {agent.agent_id} responded in {response_time:.2f}ms"
             )
 
-            if response.root.result:
-                result = response.root.result
-                for part_text in self._iter_response_text_parts(result):
-                    # Log raw response (Deep Debug)
-                    self.storage.log_agent_response(
-                        game_id=game_id,
-                        agent_id=agent.agent_id,
-                        phase=game_state.phase.value,
-                        round_number=game_state.round_number,
-                        raw_response=part_text,
-                        response_time_ms=response_time
-                    )
-                    
-                    try:
-                        response_data = json.loads(part_text)
-                    except json.JSONDecodeError as decode_error:
-                        logger.error(
-                            f"Failed to decode agent response JSON: {decode_error}"
+            # Check if response itself is an error response
+            if hasattr(response, 'root'):
+                # Check for JSON-RPC errors first (error responses have 'error' attribute, not 'result')
+                if hasattr(response.root, 'error') and response.root.error:
+                    error_info = response.root.error
+                    error_msg = f"JSON-RPC error from agent: {error_info}"
+                    logger.error(f"Agent {agent.agent_id} returned error: {error_msg}")
+                    self._handle_agent_error(game_id, agent.agent_id, error_msg)
+                    return None
+                
+                # Check if response.root is an error response type (no 'result' attribute)
+                if not hasattr(response.root, 'result'):
+                    error_msg = f"Agent {agent.agent_id} returned error response (no result attribute)"
+                    logger.error(error_msg)
+                    # Try to extract error info if available
+                    if hasattr(response.root, 'error'):
+                        error_msg += f": {response.root.error}"
+                    self._handle_agent_error(game_id, agent.agent_id, error_msg)
+                    return None
+
+                # Check for result
+                if response.root.result:
+                    result = response.root.result
+                    for part_text in self._iter_response_text_parts(result):
+                        # Extract raw LLM text from metadata if available
+                        try:
+                            response_data = json.loads(part_text)
+                            raw_llm_text = None
+                            if isinstance(response_data, dict):
+                                action_meta = response_data.get("action", {}).get("metadata", {})
+                                raw_llm_text = action_meta.get("raw_llm_text")
+                        except:
+                            raw_llm_text = None
+                        
+                        # Log raw response (Deep Debug)
+                        # part_text is the JSON response from White Agent
+                        # If raw_llm_text is available, log it separately
+                        self.storage.log_agent_response(
+                            game_id=game_id,
+                            agent_id=agent.agent_id,
+                            phase=game_state.phase.value,
+                            round_number=game_state.round_number,
+                            raw_response=part_text,  # JSON response from White Agent
+                            response_time_ms=response_time
                         )
-                        self._handle_invalid_response(game_id, agent.agent_id, part_text, "JSON decode error")
-                        continue
+                        
+                        # Also log raw LLM text if available (before JSON formatting)
+                        if raw_llm_text:
+                            self.storage._write_game_event(game_id, {
+                                "event": "DEBUG_raw_llm_text",
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "game_id": game_id,
+                                "agent_id": agent.agent_id,
+                                "phase": game_state.phase.value,
+                                "round_number": game_state.round_number,
+                                "raw_llm_text": raw_llm_text,
+                                "response_time_ms": response_time
+                            })
+                        
+                        try:
+                            response_data = json.loads(part_text)
+                        except json.JSONDecodeError as decode_error:
+                            logger.error(
+                                f"Failed to decode agent response JSON: {decode_error}"
+                            )
+                            self._handle_invalid_response(game_id, agent.agent_id, part_text, "JSON decode error")
+                            continue
 
-                    try:
-                        agent_response = AgentResponse(**response_data)
-                    except Exception as parse_error:
-                        logger.error(f"Failed to parse agent response: {parse_error}")
-                        self._handle_invalid_response(game_id, agent.agent_id, part_text, str(parse_error))
-                        continue
+                        try:
+                            agent_response = AgentResponse(**response_data)
+                        except Exception as parse_error:
+                            logger.error(f"Failed to parse agent response: {parse_error}")
+                            self._handle_invalid_response(game_id, agent.agent_id, part_text, str(parse_error))
+                            continue
 
-                    action = agent_response.action
-                    action.agent_id = agent.agent_id
-                    
-                    # Log the parsed action (Deep Debug)
-                    self.storage.log_agent_action_detail(
-                        game_id=game_id,
-                        agent_id=agent.agent_id,
-                        prompt=prompt,
-                        raw_response=part_text,
-                        parsed_action=action.model_dump()
+                        action = agent_response.action
+                        action.agent_id = agent.agent_id
+                        
+                        # Log the parsed action (Deep Debug)
+                        self.storage.log_agent_action_detail(
+                            game_id=game_id,
+                            agent_id=agent.agent_id,
+                            prompt=prompt,
+                            raw_response=part_text,
+                            parsed_action=action.model_dump()
+                        )
+                        
+                        self._process_action(game_id, action)
+                        return action
+
+                    logger.error(
+                        f"Agent {agent.agent_id} returned unexpected response format: {result}"
                     )
-                    
-                    self._process_action(game_id, action)
-                    return action
-
-                logger.error(
-                    f"Agent {agent.agent_id} returned unexpected response format: {result}"
-                )
-                return None
+                    return None
+                else:
+                    # No result attribute - might be an error response
+                    error_msg = f"Agent {agent.agent_id} returned response without result"
+                    logger.error(error_msg)
+                    self._handle_agent_error(game_id, agent.agent_id, error_msg)
+                    return None
             else:
-                logger.error(f"Agent {agent.agent_id} returned error")
+                # Response doesn't have root attribute - might be error response object
+                error_msg = f"Agent {agent.agent_id} returned unexpected response type: {type(response)}"
+                logger.error(error_msg)
+                self._handle_agent_error(game_id, agent.agent_id, error_msg)
                 return None
 
         except Exception as e:
@@ -675,14 +733,19 @@ class GameOrchestrator:
         self.storage.log_game_ended(game_id, game_state.winner, game_state.round_number)
 
         # Calculate and store evaluation scores
+        # Note: Most metrics don't require a winner - they're based on actions, discussions, etc.
+        # Only the 'winner' field itself will be None for games that hit max rounds
         try:
             from extract_game_metrics import extract_game_metrics
             import os
             
-            game_log_path = f"game_logs/game_{game_id}.jsonl"
+            game_log_path = f"game_logs/baseline/game_{game_id}.jsonl"
             if os.path.exists(game_log_path):
                 logger.info(f"Calculating metrics for game {game_id}")
                 metrics = extract_game_metrics(game_log_path)
+                
+                # Ensure winner field matches game state (will be None for max-round games)
+                metrics["winner"] = game_state.winner
                 
                 self.storage._write_game_event(game_id, {
                     "event": "evaluation_metrics",
@@ -691,7 +754,10 @@ class GameOrchestrator:
                     "metrics": metrics
                 })
                 
-                logger.info(f"Game {game_id} evaluation completed with {len(metrics)} metrics")
+                if game_state.winner is None:
+                    logger.info(f"Game {game_id} metrics calculated (no winner - max rounds reached)")
+                else:
+                    logger.info(f"Game {game_id} evaluation completed with {len(metrics)} metrics")
             else:
                 logger.warning(f"Game log not found for metrics calculation: {game_log_path}")
         except Exception as e:

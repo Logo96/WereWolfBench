@@ -19,31 +19,19 @@ except ImportError:
 class LLMHandler:
     """Handles LLM interactions for the White Agent using LiteLLM."""
     
-    # System prompt to enforce concise responses (cost savings)
-    SYSTEM_PROMPT = """You are an AI playing a game of Werewolf. You must respond CONCISELY to save costs.
+    # System prompt - keep it generic, let the Green Agent's prompt specify exact format
+    SYSTEM_PROMPT = """You are an AI playing a game of Werewolf. 
 
-RESPONSE FORMAT RULES:
-1. Keep responses under 100 words
-2. Be direct - state your action clearly
-3. Provide brief reasoning (1-2 sentences max)
-4. Do NOT include unnecessary explanations
+IMPORTANT: Follow the response format specified in the user's prompt exactly. 
+The user prompt will tell you the exact format to use (ACTION, TARGET, REASONING, etc.).
 
-Your response should follow this structure:
-ACTION: [your action type]
-TARGET: [target player if applicable, otherwise "none"]
-REASONING: [brief 1-2 sentence explanation]
-
-Example response:
-ACTION: vote
-TARGET: agent_2
-REASONING: Agent_2 has been suspiciously quiet and deflecting accusations."""
+Keep your responses concise (under 100 words) and strategic."""
 
     def __init__(
         self,
-        # model: str = "gpt-4o-mini", 
-        model: str = "gpt-5.1",
+        model: str = "gpt-4o-mini",  # Default to valid model name
         temperature: float = 0.7,
-        max_tokens: int = 1000  # Enforce concise responses
+        max_tokens: int = 4000  # Enforce concise responses
     ):
         """
         Initialize the LLM handler.
@@ -60,12 +48,19 @@ REASONING: Agent_2 has been suspiciously quiet and deflecting accusations."""
         # Configure LiteLLM if available
         if LITELLM_AVAILABLE:
             # Set API key from environment
-            litellm.api_key = os.getenv("OPENAI_API_KEY")
+            api_key = os.getenv("OPENAI_API_KEY")
+            litellm.api_key = api_key
             # Enable caching for repeated similar prompts
             litellm.cache = None  # Disable for now, can enable for testing
-            logger.info(f"LLM Handler initialized with model: {model}")
+            logger.info(f"✅ LLM Handler initialized with model: {model}")
+            logger.info(f"   LiteLLM available: True")
+            logger.info(f"   API Key present: {bool(api_key)}")
+            if api_key:
+                logger.info(f"   API Key length: {len(api_key)}")
         else:
-            logger.warning("Running in fallback mode without LLM")
+            logger.error("❌ Running in fallback mode - LiteLLM NOT AVAILABLE")
+            logger.error("   Install with: pip install litellm")
+            logger.error("   Python path: Check which Python is being used")
 
     async def get_response(self, prompt: str) -> str:
         """
@@ -75,12 +70,27 @@ REASONING: Agent_2 has been suspiciously quiet and deflecting accusations."""
             prompt: The prompt from the Green Agent
             
         Returns:
-            The LLM response string
+            The LLM response string (with metadata prefix if fallback)
         """
         if not LITELLM_AVAILABLE:
-            return self._fallback_response(prompt)
+            logger.error("❌ LiteLLM not available - using fallback response")
+            logger.error("   Install with: pip install litellm")
+            fallback_resp = self._fallback_response(prompt)
+            # Add marker to identify fallback responses
+            return f"[FALLBACK]{fallback_resp}"
+        
+        # Check API key
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("❌ OPENAI_API_KEY not set - using fallback response")
+            logger.error("   Set with: export OPENAI_API_KEY='your-key'")
+            fallback_resp = self._fallback_response(prompt)
+            return f"[FALLBACK]{fallback_resp}"
         
         try:
+            logger.info(f"🤖 CALLING LLM: model={self.model}, prompt_length={len(prompt)}")
+            logger.info(f"   API Key present: {bool(api_key)}")
+            
             response = await acompletion(
                 model=self.model,
                 messages=[
@@ -93,13 +103,18 @@ REASONING: Agent_2 has been suspiciously quiet and deflecting accusations."""
             
             # Extract the response text
             response_text = response.choices[0].message.content
-            logger.debug(f"LLM response: {response_text}")
+            logger.info(f"✅ LLM RESPONSE RECEIVED (length: {len(response_text)}):")
+            logger.info(f"   {response_text[:500]}...")  # Print first 500 chars
+            if len(response_text) > 500:
+                logger.info(f"   ... (truncated, total length: {len(response_text)})")
             
             return response_text
             
         except Exception as e:
             logger.error(f"LLM call failed: {e}", exc_info=True)
-            return self._fallback_response(prompt)
+            logger.error(f"Model: {self.model}, API Key present: {bool(api_key)}")
+            fallback_resp = self._fallback_response(prompt)
+            return f"[FALLBACK]{fallback_resp}"
 
     def _fallback_response(self, prompt: str) -> str:
         """

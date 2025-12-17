@@ -216,16 +216,22 @@ class StateManager:
         # Clear current votes
         game_state.current_votes.clear()
 
+        # Store current phase to detect round completion
+        current_phase = game_state.phase
+
         # Move to next phase
         game_state.phase = StateManager.get_next_phase(
             game_state.phase,
             game_state.config.model_dump()
         )
 
-        # Increment round number if returning to day
-        if game_state.phase == GamePhase.DAY_DISCUSSION:
+        # Increment round number after completing a full round (after DAY_VOTING -> NIGHT_WEREWOLF)
+        # This ensures we play the full number of rounds before checking max_rounds
+        if current_phase == GamePhase.DAY_VOTING and game_state.phase == GamePhase.NIGHT_WEREWOLF:
             game_state.round_number += 1
-            # Clear night-specific state
+        
+        # Clear night-specific state when transitioning to day phases
+        if game_state.phase == GamePhase.DAY_DISCUSSION:
             game_state.killed_this_night = None
             game_state.hunter_eliminated = None
 
