@@ -12,3 +12,10 @@ ENV/
 htmlcov/
 *.log
 .DS_Store
+
+# Game logs - ignore all files in game_logs/ folder
+game_logs/*
+docs/*
+# But allow README or other documentation files if needed
+!game_logs/README.md
+!game_logs/.gitkeep

@@ -1,4 +1,7 @@
-"""Storage system with both in-memory and file persistence for game data"""
+"""Storage system with both in-memory and file persistence for game data.
+
+Enhanced with deep debug logging for White Agent decision tracking.
+"""
 
 import json
 import logging
@@ -22,6 +25,20 @@ def _serialize_metadata_list(metadata_list: List[Dict]) -> List[Dict]:
                 serialized_item[key] = value
         serialized.append(serialized_item)
     return serialized
+
+
+def _serialize_for_json(obj: Any) -> Any:
+    """Recursively serialize objects for JSON."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: _serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_serialize_for_json(item) for item in obj]
+    elif hasattr(obj, 'value'):  # Enum
+        return obj.value
+    else:
+        return obj
 
 logger = logging.getLogger(__name__)
 
@@ -372,3 +389,203 @@ class GameLogger:
             return None
 
         return {"game_id": game_id, "events": events}
+
+    # =========================================================================
+    # DEEP DEBUG LOGGING - Track exact prompts and responses for White Agents
+    # =========================================================================
+
+    def log_agent_prompt(
+        self,
+        game_id: str,
+        agent_id: str,
+        phase: str,
+        round_number: int,
+        prompt: str
+    ) -> None:
+        """
+        Log the exact prompt sent to a White Agent.
+        
+        This enables full visibility into what context each agent receives.
+        """
+        self._write_game_event(game_id, {
+            "event": "agent_prompt",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "phase": phase,
+            "round_number": round_number,
+            "prompt": prompt,
+            "prompt_length": len(prompt)
+        })
+        
+        logger.debug(f"Logged prompt for {agent_id} in {phase} (round {round_number})")
+
+    def log_agent_response(
+        self,
+        game_id: str,
+        agent_id: str,
+        phase: str,
+        round_number: int,
+        raw_response: str,
+        response_time_ms: float = None
+    ) -> None:
+        """
+        Log the raw response received from a White Agent.
+        
+        This captures exactly what the LLM returned before any parsing.
+        """
+        self._write_game_event(game_id, {
+            "event": "agent_response",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "phase": phase,
+            "round_number": round_number,
+            "raw_response": raw_response,
+            "response_length": len(raw_response),
+            "response_time_ms": response_time_ms
+        })
+        
+        logger.debug(f"Logged response from {agent_id} ({response_time_ms:.2f}ms)")
+
+    def log_agent_action_detail(
+        self,
+        game_id: str,
+        agent_id: str,
+        prompt: str,
+        raw_response: str,
+        parsed_action: Dict[str, Any]
+    ) -> None:
+        """
+        Log complete prompt->response->action cycle for an agent.
+        
+        This is the comprehensive debug log that shows:
+        1. What prompt was sent
+        2. What raw response was received
+        3. How it was parsed into an action
+        """
+        # Serialize the action for JSON
+        serialized_action = _serialize_for_json(parsed_action)
+        
+        self._write_game_event(game_id, {
+            "event": "agent_action_detail",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "input_prompt": prompt,
+            "raw_output": raw_response,
+            "parsed_action": serialized_action,
+            "prompt_tokens_estimate": len(prompt.split()),
+            "response_tokens_estimate": len(raw_response.split())
+        })
+
+    def log_agent_error(
+        self,
+        game_id: str,
+        agent_id: str,
+        error_type: str,
+        error_message: str,
+        raw_response: str = None
+    ) -> None:
+        """
+        Log errors that occur during agent communication or response parsing.
+        """
+        self._write_game_event(game_id, {
+            "event": "agent_error",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "error_type": error_type,
+            "error_message": error_message,
+            "raw_response": raw_response
+        })
+        
+        logger.warning(f"Agent error logged: {agent_id} - {error_type}: {error_message}")
+
+    def get_agent_prompts(self, game_id: str, agent_id: str = None) -> List[Dict[str, Any]]:
+        """
+        Get all prompts sent to agents in a game.
+        
+        Args:
+            game_id: Game ID
+            agent_id: Optional filter for specific agent
+            
+        Returns:
+            List of prompt events
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        prompts = [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "agent_prompt"
+        ]
+        
+        if agent_id:
+            prompts = [p for p in prompts if p.get("agent_id") == agent_id]
+        
+        return prompts
+
+    def get_agent_responses(self, game_id: str, agent_id: str = None) -> List[Dict[str, Any]]:
+        """
+        Get all responses from agents in a game.
+        
+        Args:
+            game_id: Game ID
+            agent_id: Optional filter for specific agent
+            
+        Returns:
+            List of response events
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        responses = [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "agent_response"
+        ]
+        
+        if agent_id:
+            responses = [r for r in responses if r.get("agent_id") == agent_id]
+        
+        return responses
+
+    def get_agent_errors(self, game_id: str) -> List[Dict[str, Any]]:
+        """Get all agent errors in a game."""
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        return [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "agent_error"
+        ]
+
+    def get_decision_trace(self, game_id: str, agent_id: str, round_number: int = None) -> List[Dict[str, Any]]:
+        """
+        Get the complete decision trace for an agent.
+        
+        Returns prompt->response->action sequences for debugging.
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        events = game_log.get("events", [])
+        
+        # Filter for this agent's detailed action events
+        traces = [
+            event for event in events
+            if event.get("event") == "agent_action_detail"
+            and event.get("agent_id") == agent_id
+        ]
+        
+        if round_number:
+            traces = [
+                t for t in traces
+                if t.get("parsed_action", {}).get("metadata", {}).get("round_number") == round_number
+            ]
+        
+        return traces

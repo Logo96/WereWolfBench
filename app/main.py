@@ -94,12 +94,12 @@ class WerewolfGreenAgentExecutor(AgentExecutor):
 
             # Send response
             response_message = new_agent_text_message(json.dumps(result))
-            event_queue.enqueue_event(response_message)
+            await event_queue.enqueue_event(response_message)
 
         except Exception as e:
             logger.error(f"Error executing task: {e}", exc_info=True)
             error_message = new_agent_text_message(json.dumps({"error": str(e)}))
-            event_queue.enqueue_event(error_message)
+            await event_queue.enqueue_event(error_message)
 
     async def _handle_start_game(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Handle start_game task."""
