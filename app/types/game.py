@@ -15,6 +15,7 @@ class GamePhase(str, Enum):
     NIGHT_WITCH = "night_witch"
     NIGHT_SEER = "night_seer"
     NIGHT_DOCTOR = "night_doctor"
+    HUNTER_SHOOT = "hunter_shoot"
     GAME_OVER = "game_over"
 
 

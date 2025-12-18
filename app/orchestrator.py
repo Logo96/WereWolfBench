@@ -171,7 +171,31 @@ class GameOrchestrator:
                         # Re-fetch agents to get latest status after eliminations
                         agents = self.storage.get_agents(game_id)
                         await self._handle_last_words(game_id, game_state, night_eliminated, agents)
+                        
+                        # Handle hunter shooting for hunters eliminated at night
+                        for agent_id in night_eliminated:
+                            if game_state.role_assignments.get(agent_id) == AgentRole.HUNTER.value:
+                                logger.info(f"Game {game_id}: Hunter {agent_id} was eliminated at night - requesting shoot action")
+                                hunter_agent = next((a for a in agents if a.agent_id == agent_id), None)
+                                if hunter_agent:
+                                    await self._handle_hunter_shoot(game_id, game_state, hunter_agent, is_night=True)
+                                    # Re-fetch game state after hunter shoot (may have eliminated another agent)
+                                    game_state = self.storage.get_game(game_id)
 
+                    # Handle hunter shooting for hunters eliminated by vote during the day
+                    if old_phase == GamePhase.DAY_VOTING:
+                        day_eliminated = eliminated.copy()
+                        for agent_id in day_eliminated:
+                            if game_state.role_assignments.get(agent_id) == AgentRole.HUNTER.value:
+                                logger.info(f"Game {game_id}: Hunter {agent_id} was eliminated by vote - requesting shoot action")
+                                agents = self.storage.get_agents(game_id)
+                                hunter_agent = next((a for a in agents if a.agent_id == agent_id), None)
+                                if hunter_agent:
+                                    await self._handle_hunter_shoot(game_id, game_state, hunter_agent, is_night=False)
+                                    # Re-fetch game state after hunter shoot (may have eliminated another agent)
+                                    game_state = self.storage.get_game(game_id)
+
+                    # Log all eliminations
                     for agent_id in eliminated:
                         logger.info(f"Game {game_id}: Agent {agent_id} eliminated")
 
@@ -302,6 +326,58 @@ class GameOrchestrator:
             except Exception as e:
                 logger.error(f"Error in sequential discussion from {agent.agent_id}: {e}")
                 self._handle_agent_error(game_id, agent.agent_id, str(e))
+
+    async def _handle_hunter_shoot(
+        self,
+        game_id: str,
+        game_state: GameState,
+        hunter_agent: AgentProfile,
+        is_night: bool = False
+    ):
+        """Handle hunter shooting when eliminated.
+        
+        Args:
+            game_id: Game ID
+            game_state: Current game state
+            hunter_agent: The eliminated hunter agent
+            is_night: True if eliminated at night, False if eliminated by vote during day
+        """
+        # Temporarily set phase to HUNTER_SHOOT for prompt building
+        original_phase = game_state.phase
+        game_state.phase = GamePhase.HUNTER_SHOOT
+        
+        # Store context for prompt building
+        game_state.metadata = game_state.metadata or {}
+        game_state.metadata["hunter_shoot_is_night"] = is_night
+        
+        try:
+            # Request shoot action from hunter
+            shoot_action = await self._request_agent_action(
+                game_id, hunter_agent, game_state
+            )
+            
+            if shoot_action and shoot_action.action_type == ActionType.SHOOT:
+                target = shoot_action.target_agent_id
+                if target and target in game_state.alive_agent_ids:
+                    # Process the shoot action
+                    self._process_action(game_id, shoot_action)
+                    
+                    # Eliminate the shot target
+                    self.engine.state_manager.eliminate_agent(game_state, target)
+                    context = "at night" if is_night else "publicly during the day"
+                    logger.info(f"Game {game_id}: Hunter {hunter_agent.agent_id} shot and eliminated {target} {context}")
+                    
+                    # Save game state
+                    self.storage.save_game(game_state)
+                else:
+                    logger.warning(f"Game {game_id}: Hunter {hunter_agent.agent_id} attempted invalid shoot target: {target}")
+            else:
+                logger.warning(f"Game {game_id}: Hunter {hunter_agent.agent_id} did not provide valid shoot action")
+        finally:
+            # Restore original phase and clean up metadata
+            game_state.phase = original_phase
+            if game_state.metadata:
+                game_state.metadata.pop("hunter_shoot_is_night", None)
 
     async def _handle_last_words(
         self,
@@ -457,7 +533,6 @@ class GameOrchestrator:
             prompt += "After this, you will never speak again.\n\n"
             prompt += "⚠️ CRITICAL: If you accuse or defend anyone, you MUST include their exact agent_id in DISCUSSION_TARGETS. "
             prompt += "If you mention someone in your message but don't include them in DISCUSSION_TARGETS, your action will be invalid."
-            # BASELINE VERSION: No strategic guidance - only stating the rule
         
         # Get visible state (for backwards compatibility)
         visible_state = self.engine.get_agent_view(game_state, agent.agent_id, self.storage)

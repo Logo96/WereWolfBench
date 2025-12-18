@@ -187,11 +187,17 @@ async def send_jsonrpc(
 
 
 def save_metrics(game_id: str, metrics: dict, output_dir: str = "metrics", subfolder: str = "baseline"):
-    """Save game metrics to a JSON file."""
+    """Save game metrics to a JSON file.
+    
+    Note: This function saves metrics with the format {game_id}_metrics.json
+    to match the format used by extract_game_metrics.py (which removes 'game_' prefix from log filenames).
+    """
     output_path = Path(output_dir) / subfolder
     output_path.mkdir(parents=True, exist_ok=True)
     
-    metrics_file = output_path / f"game_{game_id}_metrics.json"
+    # Remove 'game_' prefix if present to match extract_game_metrics.py format
+    metrics_name = game_id.replace("game_", "") if game_id.startswith("game_") else game_id
+    metrics_file = output_path / f"{metrics_name}_metrics.json"
     
     with open(metrics_file, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, ensure_ascii=False)
@@ -240,14 +246,29 @@ async def run_full_game(args: argparse.Namespace):
             print("   export GEMINI_API_KEY='your-key-here'\n")
             print("   Or use: export GOOGLE_API_KEY='your-key-here'\n")
         
-        # Model assignments: all agents use the model specified in LLM_MODEL env var, or default to Gemini 2.5 Flash
-        # You can override by setting: export LLM_MODEL="gemini/gemini-1.5-flash" (or any other model)
-        GEMINI_MODEL = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
+        # Model assignments based on --model argument
+        FLASH_MODEL = "gemini/gemini-2.0-flash"
+        FLASHLITE_MODEL = "gemini/gemini-2.0-flash-lite"
+        
+        # Determine model assignment based on --model argument
+        if args.model == "flashonly":
+            model_assignment = [FLASH_MODEL] * 9
+            model_description = "All agents: Gemini 2.0 Flash"
+        elif args.model == "flashlite":
+            model_assignment = [FLASHLITE_MODEL] * 9
+            model_description = "All agents: Gemini 2.0 Flash Lite"
+        elif args.model == "mixed":
+            model_assignment = [FLASH_MODEL] * 4 + [FLASHLITE_MODEL] * 5
+            model_description = "Agents 1-4: Gemini 2.0 Flash, Agents 5-9: Gemini 2.0 Flash Lite"
+        else:
+            # Default: use LLM_MODEL env var or fallback to Gemini 2.5 Flash
+            default_model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
+            model_assignment = [default_model] * 9
+            model_description = f"All agents: {default_model}"
         
         for i in range(9):
             port = WHITE_AGENT_START_PORT + i
-            # All agents use the model specified in GEMINI_MODEL
-            model = GEMINI_MODEL
+            model = model_assignment[i]
             agent_name = f"White Agent {i+1} ({model})"
             
             # Pass both GEMINI_API_KEY and GOOGLE_API_KEY for compatibility
@@ -283,7 +304,7 @@ async def run_full_game(args: argparse.Namespace):
         
         # No max_rounds limit - game will run to natural completion
         game_config = {
-            "num_werewolves": 2,
+            "num_werewolves": 3,
             "has_seer": True,
             "has_doctor": True,
             "has_hunter": True,
@@ -295,14 +316,14 @@ async def run_full_game(args: argparse.Namespace):
         
         async with httpx.AsyncClient() as client:
             print(f"Starting game with {len(agent_urls)} real White Agents...")
-            print(f"  - All agents: Gemini 2.5 Flash")
+            print(f"  - {model_description}")
             print(f"\nConfig: {json.dumps(game_config, indent=2)}")
             print(f"\n✓ No max_rounds limit - game will run to natural completion\n")
             
             # Create model mapping for tracking
             agent_models = {}
             for i, url in enumerate(agent_urls):
-                model = GEMINI_MODEL
+                model = model_assignment[i]
                 agent_models[url] = model
             
             try:
@@ -481,6 +502,13 @@ def main():
         type=str,
         default=None,
         help="Custom name for log and metrics files (e.g., 'test1' creates game_test1.jsonl and game_test1_metrics.json)"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["flashonly", "flashlite", "mixed"],
+        default=None,
+        help="Model assignment: 'flashonly' (all use gemini-2.0-flash), 'flashlite' (all use gemini-2.0-flash-lite), 'mixed' (agents 1-4 use flash, 5-9 use flashlite). If not specified, uses LLM_MODEL env var or defaults to gemini-2.5-flash."
     )
     
     args = parser.parse_args()

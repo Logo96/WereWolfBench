@@ -1,5 +1,6 @@
 """LLM Handler using LiteLLM for White Agent responses."""
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -89,7 +90,7 @@ Keep your responses concise (under 100 words) and strategic."""
 
     async def get_response(self, prompt: str) -> str:
         """
-        Get a response from the LLM.
+        Get a response from the LLM with retry logic for rate limits.
         
         Args:
             prompt: The prompt from the Green Agent
@@ -123,43 +124,79 @@ Keep your responses concise (under 100 words) and strategic."""
                 fallback_resp = self._fallback_response(prompt)
                 return f"[FALLBACK]{fallback_resp}"
         
-        try:
-            logger.info(f"🤖 CALLING LLM: model={self.model}, prompt_length={len(prompt)}")
-            logger.info(f"   API Key present: {bool(api_key)}")
-            
-            # Prepare API key for LiteLLM
-            # For Gemini, LiteLLM reads from GOOGLE_API_KEY env var automatically
-            # For OpenAI, we pass it via api_key parameter
-            kwargs = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens
-            }
-            
-            # Only set api_key explicitly for non-Gemini models
-            if not self.is_gemini:
-                kwargs["api_key"] = api_key
-            
-            response = await acompletion(**kwargs)
-            
-            # Extract the response text
-            response_text = response.choices[0].message.content
-            logger.info(f"✅ LLM RESPONSE RECEIVED (length: {len(response_text)}):")
-            logger.info(f"   {response_text[:500]}...")  # Print first 500 chars
-            if len(response_text) > 500:
-                logger.info(f"   ... (truncated, total length: {len(response_text)})")
-            
-            return response_text
-            
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}", exc_info=True)
-            logger.error(f"Model: {self.model}, API Key present: {bool(api_key)}")
-            fallback_resp = self._fallback_response(prompt)
-            return f"[FALLBACK]{fallback_resp}"
+        # Retry logic for rate limit errors
+        max_retries = 29
+        retry_delay = 30  # seconds
+        
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"🤖 CALLING LLM: model={self.model}, prompt_length={len(prompt)} (attempt {attempt + 1}/{max_retries + 1})")
+                logger.info(f"   API Key present: {bool(api_key)}")
+                
+                # Prepare API key for LiteLLM
+                # For Gemini, LiteLLM reads from GOOGLE_API_KEY env var automatically
+                # For OpenAI, we pass it via api_key parameter
+                kwargs = {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens
+                }
+                
+                # Only set api_key explicitly for non-Gemini models
+                if not self.is_gemini:
+                    kwargs["api_key"] = api_key
+                
+                response = await acompletion(**kwargs)
+                
+                # Extract the response text
+                response_text = response.choices[0].message.content
+                logger.info(f"✅ LLM RESPONSE RECEIVED (length: {len(response_text)}):")
+                logger.info(f"   {response_text[:500]}...")  # Print first 500 chars
+                if len(response_text) > 500:
+                    logger.info(f"   ... (truncated, total length: {len(response_text)})")
+                
+                return response_text
+                
+            except Exception as e:
+                # Check if this is a rate limit error
+                is_rate_limit = False
+                error_str = str(e).lower()
+                
+                # Check for rate limit indicators
+                if "429" in error_str or "rate limit" in error_str or "quota" in error_str:
+                    is_rate_limit = True
+                elif LITELLM_AVAILABLE:
+                    # Check if it's a litellm RateLimitError
+                    try:
+                        from litellm import RateLimitError
+                        if isinstance(e, RateLimitError):
+                            is_rate_limit = True
+                    except ImportError:
+                        pass
+                
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning(f"⚠️  Rate limit error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    logger.warning(f"   Waiting {retry_delay} seconds before retry...")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    # Not a rate limit error, or max retries reached
+                    if is_rate_limit:
+                        logger.error(f"❌ Rate limit error persisted after {max_retries + 1} attempts. Using fallback response.")
+                    else:
+                        logger.error(f"LLM call failed: {e}", exc_info=True)
+                        logger.error(f"Model: {self.model}, API Key present: {bool(api_key)}")
+                    fallback_resp = self._fallback_response(prompt)
+                    return f"[FALLBACK]{fallback_resp}"
+        
+        # Should never reach here, but just in case
+        logger.error("❌ Max retries exceeded. Using fallback response.")
+        fallback_resp = self._fallback_response(prompt)
+        return f"[FALLBACK]{fallback_resp}"
 
     def _fallback_response(self, prompt: str) -> str:
         """
