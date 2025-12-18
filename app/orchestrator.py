@@ -572,10 +572,10 @@ class GameOrchestrator:
         
         # Add last words context
         if is_last_words:
-            prompt += "\n\n⚠️ IMPORTANT: You have been ELIMINATED at night. This is your LAST WORDS - you can only speak once. "
+            prompt += "\n\nIMPORTANT: You have been ELIMINATED at night. This is your LAST WORDS - you can only speak once. "
             prompt += "You may use multiple discussion subactions (e.g., defend someone AND accuse someone else). "
             prompt += "After this, you will never speak again.\n\n"
-            prompt += "⚠️ CRITICAL: If you accuse or defend anyone, you MUST include their exact agent_id in DISCUSSION_TARGETS. "
+            prompt += "CRITICAL: If you accuse or defend anyone, you MUST include their exact agent_id in DISCUSSION_TARGETS. "
             prompt += "If you mention someone in your message but don't include them in DISCUSSION_TARGETS, your action will be invalid."
         
         # Get visible state (for backwards compatibility)

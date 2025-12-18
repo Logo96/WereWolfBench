@@ -291,29 +291,29 @@ class PublicGameMemory:
             rounds = all_rounds
         
         for round_num in rounds:
-            round_lines = [f"\n📍 ROUND {round_num}:"]
+            round_lines = [f"\nROUND {round_num}:"]
             
             # Discussions
             discussions = self._discussions_by_round.get(round_num, [])
             if discussions:
-                round_lines.append("  💬 Discussions:")
+                round_lines.append("  Discussions:")
                 for d in discussions:
                     targets = d.metadata.get("targets", [])
-                    target_str = f" (→{','.join(targets)})" if targets else ""
+                    target_str = f" (targets: {','.join(targets)})" if targets else ""
                     # Truncate long discussions
                     content = d.content or ""
-                    if len(content) > 150:
-                        content = content[:147] + "..."
-                    round_lines.append(f"    • {d.agent_id}{target_str}: \"{content}\"")
+                    if len(content) > 300:
+                        content = content[:297] + "..."
+                    round_lines.append(f"    {d.agent_id}{target_str}: \"{content}\"")
             
             # Votes
             votes = self._votes_by_round.get(round_num, {})
             if votes:
-                round_lines.append("  🗳️ Votes:")
+                round_lines.append("  Votes:")
                 vote_counts = {}
                 for voter, target in votes.items():
                     vote_counts[target] = vote_counts.get(target, 0) + 1
-                    round_lines.append(f"    • {voter} → {target}")
+                    round_lines.append(f"    {voter} -> {target}")
                 # Add vote summary
                 vote_summary = ", ".join([f"{t}:{c}" for t, c in sorted(vote_counts.items(), key=lambda x: -x[1])])
                 round_lines.append(f"    Summary: {vote_summary}")
@@ -321,9 +321,14 @@ class PublicGameMemory:
             # Eliminations in this round
             round_elims = [e for e in self._eliminations if e["round"] == round_num]
             if round_elims:
-                round_lines.append("  ❌ Eliminated:")
+                round_lines.append("  Eliminated:")
                 for e in round_elims:
-                    round_lines.append(f"    • {e['agent_id']} ({e['method']})")
+                    # Only show public elimination methods
+                    # Vote eliminations are public
+                    # Hunter shots are public
+                    # Night deaths (werewolf kill/witch poison) are ambiguous - don't reveal method
+                    public_method = self._get_public_elimination_method(e['method'])
+                    round_lines.append(f"    {e['agent_id']} ({public_method})")
             
             lines.extend(round_lines)
         
@@ -331,7 +336,7 @@ class PublicGameMemory:
         if self._alive_by_round:
             latest_round = max(self._alive_by_round.keys())
             alive = self._alive_by_round[latest_round]
-            lines.append(f"\n📊 Current: {len(alive)} alive, {len(self._eliminations)} eliminated")
+            lines.append(f"\nCurrent: {len(alive)} alive, {len(self._eliminations)} eliminated")
         
         return "\n".join(lines) if lines else "No game history yet."
     
@@ -430,6 +435,27 @@ class PublicGameMemory:
     # =========================================================================
     # Internal
     # =========================================================================
+    
+    def _get_public_elimination_method(self, internal_method: str) -> str:
+        """
+        Convert internal elimination method to public method.
+        
+        Information hiding rules:
+        - "vote" → "vote" (public - everyone sees voting)
+        - "hunter_shot" → "hunter_shot" (public - hunter shoots publicly)
+        - "werewolf_kill" → "eliminated" (public that they died, but don't reveal it was werewolf kill)
+        - "witch_poison" → "eliminated" (PRIVATE - witch poison looks like werewolf kill unless witch reveals)
+        
+        This ensures witch poison use remains secret unless the witch chooses to reveal it.
+        """
+        if internal_method == "vote":
+            return "vote"  # Public - everyone sees voting
+        elif internal_method == "hunter_shot":
+            return "hunter_shot"  # Public - hunter shoots publicly
+        else:
+            # Night deaths (werewolf kill, witch poison) are ambiguous
+            # Don't reveal the method - just show they were eliminated
+            return "eliminated"
     
     def _update_timestamp(self) -> None:
         """Update the last modified timestamp."""

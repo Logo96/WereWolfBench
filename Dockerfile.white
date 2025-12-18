@@ -1,0 +1,29 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Make white_run.sh executable (for AgentBeats controller)
+RUN chmod +x white_run.sh
+# AgentBeats looks for run.sh by default, so create a symlink or copy
+RUN cp white_run.sh run.sh && chmod +x run.sh
+
+# Set environment variables
+ENV PORT=9002
+ENV HOST=0.0.0.0
+ENV ENVIRONMENT=production
+# BASE_URL will be overridden by AGENT_URL if set by AgentBeats
+ENV BASE_URL=http://localhost:9002
+
+EXPOSE 9002
+
+# Run via AgentBeats controller which handles /status and /agents
+# The controller will call white_run.sh which starts white_main.py
+CMD ["agentbeats", "run_ctrl"]
+

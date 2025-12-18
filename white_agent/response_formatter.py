@@ -391,25 +391,23 @@ class ResponseFormatter:
         """Format discussion-specific action fields, supporting multiple subactions."""
         fields = {}
         
-        # Support multiple discussion subactions
+        # Support multiple discussion subactions - STRICTLY REQUIRE STRUCTURED FORMAT
         discussion_subactions = parsed.get("discussion_subactions", [])
         discussion_targets = parsed.get("discussion_targets", [])
-        
-        # If single discussion_type provided (backward compatibility)
+
+        # If no structured subactions provided, default to general_discussion
+        # This prevents keyword gaming but allows natural responses
         if not discussion_subactions:
-            disc_type = parsed.get("discussion_type", "general_discussion")
-            discussion_subactions = [disc_type]
-            if parsed.get("target"):
-                discussion_targets = [[parsed.get("target")]]  # Wrap in list of lists
-            else:
-                discussion_targets = [[]]
+            discussion_subactions = ["general_discussion"]
+            discussion_targets = [[]]
         
-        # Parse multiple subactions from text if not explicitly provided
-        if len(discussion_subactions) == 1 and discussion_subactions[0] == "general_discussion":
-            # Try to extract multiple subactions from reasoning/content
+        # Only use keyword extraction if no structured subactions provided
+        # This prevents gaming the keyword detection system
+        if not discussion_subactions or (len(discussion_subactions) == 1 and discussion_subactions[0] == "general_discussion"):
+            # Try to extract multiple subactions from reasoning/content as fallback
             content = parsed.get("discussion_content") or parsed.get("reasoning", "")
             extracted_subactions = ResponseFormatter._extract_multiple_subactions(content)
-            if extracted_subactions:
+            if extracted_subactions and len(extracted_subactions) > 1:  # Only use if multiple actions detected
                 discussion_subactions = extracted_subactions
                 # Extract targets for each subaction (returns List[List[str]])
                 discussion_targets = ResponseFormatter._extract_targets_for_subactions(content, discussion_subactions)

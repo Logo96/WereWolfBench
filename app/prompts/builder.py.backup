@@ -49,9 +49,14 @@ STRATEGY GUIDELINES:
 - Consider who benefits from each elimination
 - Build alliances but verify claims independently
 - Use accusations strategically - false accusations can backfire
-- Lying is an option when it benefits you (e.g., claim_role can be false)
+- **DECEPTION IS KEY**: You can and SHOULD lie to benefit yourself or your team
+  - Use claim_role to pretend to be any role (seer, doctor, etc.) even if you're not
+  - Use defend to protect teammates or create confusion
+  - Use accuse to eliminate threats or frame innocent players
+  - Create false alliances and betray them later
 - Reveal information carefully - timing and targets matter
 - Use multiple subactions in one speech to be more effective
+- Misinformation is a powerful weapon - spread rumors, doubt, and confusion
 
 AVAILABLE ACTIONS:
 You can use multiple discussion subactions in one response.
@@ -72,15 +77,6 @@ Subactions requiring targets (MUST include agent_id in DISCUSSION_TARGETS):
 
 Subactions without targets:
 - general_discussion, reveal_identity, claim_role, last_words
-
-CRITICAL SUBACTION REQUIREMENT:
-You MUST choose the appropriate subaction(s) for what you want to do. Do NOT use "general_discussion" when you want to:
-- Accuse someone → Use "accuse" subaction
-- Defend someone → Use "defend" subaction
-- Claim a role → Use "claim_role" subaction
-- Reveal your role → Use "reveal_identity" subaction
-
-"general_discussion" is ONLY for pure discussion without specific actions. If you want to take any specific action, you MUST specify it in DISCUSSION_SUBACTIONS.
 
 RESPONSE FORMAT:
 ACTION: discuss
@@ -123,7 +119,7 @@ Cannot vote for yourself.
 RESPONSE FORMAT:
 ACTION: vote
 TARGET: [agent_id]
-REASONING: [why you're voting for this player]""",
+REASONING: [why you're voting for this player]"""
 
         GamePhase.NIGHT_WEREWOLF: """ROUND {round} - NIGHT PHASE: WEREWOLF HUNT
 
@@ -286,7 +282,7 @@ ACTION: [heal|poison|pass]
 TARGET: [agent_id or none]
 REASONING: [why you're making this decision]""",
     }
-
+    
     # Role-specific instructions with win conditions and rules
     ROLE_INSTRUCTIONS = {
         AgentRole.VILLAGER: """ROLE: VILLAGER
@@ -298,11 +294,10 @@ STRATEGY:
 - Identify players who avoid voting or vote randomly
 - Build trust with confirmed villagers through consistent voting
 - Be cautious of role claims - verify through actions, not words
-- Use discussion subactions to take specific actions:
-  - Use "accuse" subaction to point out suspicious players
-  - Use "defend" subaction to protect allies or yourself
-  - Use "claim_role" subaction to pose as eliminated roles and gather information
-- Create fake alliances to expose werewolves
+- **DECEPTION**: You can lie to benefit the village
+  - Use claim_role to pretend to be roles you suspect are eliminated
+  - Use false accusations to test reactions
+  - Create fake alliances to expose werewolves
   - Spread misinformation to confuse the werewolf team""",
 
         AgentRole.WEREWOLF: """ROLE: WEREWOLF
@@ -316,12 +311,12 @@ STRATEGY:
 - Target high-value roles (seer, doctor) at night
 - Avoid drawing attention - don't defend teammates too obviously
 - Create confusion by voting against teammates occasionally to appear independent
-- Use discussion subactions strategically:
-  - Use "accuse" subaction to eliminate real threats or create false suspicions
-  - Use "defend" subaction to protect teammates while appearing helpful
-  - Use "claim_role" subaction to pretend to be villager roles (doctor, seer, witch)
-- Spread misinformation about other players
-- Create fake alliances and betray them during voting
+- **MASTER DECEPTION**: Lie extensively to survive and eliminate villagers
+  - Use claim_role to pretend to be villager roles (doctor, seer, witch)
+  - Use accuse to eliminate real threats or create false suspicions
+  - Use defend to protect teammates while appearing helpful
+  - Spread misinformation about other players
+  - Create fake alliances and betray them during voting
 - Your survival depends on convincing villagers you're innocent""",
 
         AgentRole.SEER: """ROLE: SEER
@@ -333,10 +328,10 @@ STRATEGY:
 - Early game: investigate quietly. Late game: reveal confirmed werewolves
 - Be cautious about revealing your role - werewolves will target you
 - Cross-reference investigation results with voting patterns
-- Use discussion subactions strategically:
-  - Use "reveal_investigation" subaction to share investigation results
-  - Use "accuse" subaction to point out confirmed werewolves
-  - Use "claim_role" subaction to pretend to be other roles if your cover is blown""",
+- **DECEPTION**: Use misinformation to protect yourself
+  - Use claim_role to pretend to be other roles if your cover is blown
+  - Use false accusations to create confusion
+  - Consider lying about investigation results if it benefits the village""",
 
         AgentRole.DOCTOR: """ROLE: DOCTOR
 GOAL: Protect key players from werewolf attacks and help identify threats.

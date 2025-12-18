@@ -234,9 +234,9 @@ async def run_full_game(args: argparse.Namespace):
         # Wait a bit for Green Agent to start
         await asyncio.sleep(2)
         
-        # 2. Start 8 Real White Agents (all using Gemini 2.5 Flash)
+        # 2. Start 9 Real White Agents (all using Gemini 2.5 Flash)
         print("\n" + "=" * 70)
-        print("Starting 8 Real White Agents (LLM-powered)")
+        print("Starting 9 Real White Agents (LLM-powered)")
         print("=" * 70)
         
         if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
