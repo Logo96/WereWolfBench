@@ -105,6 +105,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         
         The White Agent is a REACTOR - it only responds to prompts from the Green Agent.
         All context and instructions come from the Green Agent's prompt.
+        Game history is accessed via get_game_memory tool call.
         """
         global llm_handler
         
@@ -118,6 +119,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         alive_agents = task_data.get("alive_agents", [])
         eliminated_agents = task_data.get("eliminated_agents", [])
         prompt = task_data.get("prompt", "")  # Full prompt from Green Agent
+        memory_data = task_data.get("memory_data")  # Serialized memory for tool access
         
         # Add agent_id to game_state so ResponseFormatter can use it
         if your_agent_id:
@@ -125,6 +127,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         
         # Log input for debugging
         logger.info(f"Received task for game {game_id}, phase {phase}, role {your_role}")
+        logger.info(f"Memory data available: {memory_data is not None}")
         logger.debug(f"Full prompt: {prompt[:500]}...")
         
         # Use the prompt directly if provided, otherwise construct minimal response
@@ -133,10 +136,18 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
             logger.warning("No prompt provided by Green Agent, using fallback")
             prompt = self._create_fallback_prompt(task_data)
         
-        # Call LLM with the prompt
+        # Call LLM with the prompt and memory data for tool access
         start_time = time.time()
-        llm_response = await llm_handler.get_response(prompt)
+        llm_response, tool_call_info = await llm_handler.get_response(prompt, memory_data=memory_data)
         response_time = (time.time() - start_time) * 1000
+        
+        # Log tool call information
+        if tool_call_info:
+            logger.info(f"🔧 Tool calls made: {tool_call_info.get('tool_calls_count', 0)} call(s)")
+            for tc in tool_call_info.get('tool_calls', []):
+                logger.info(f"   - {tc['tool_name']}: {tc['tool_args']}")
+        else:
+            logger.info(f"🔧 No tool calls made by LLM")
         
         # Store raw LLM text BEFORE formatting (for logging)
         raw_llm_text = llm_response
@@ -168,11 +179,16 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
             game_state=game_state
         )
         
-        # Store raw LLM text in action_response metadata for logging
+        # Store raw LLM text and tool call info in action_response metadata for logging
         # This will be logged by the Green Agent
         if "metadata" not in action_response.get("action", {}):
             action_response["action"]["metadata"] = {}
         action_response["action"]["metadata"]["raw_llm_text"] = raw_llm_text[:1000]  # Store first 1000 chars
+        
+        # Include tool call information for logging
+        if tool_call_info:
+            action_response["action"]["metadata"]["tool_calls"] = tool_call_info
+            logger.info(f"📝 Including {tool_call_info.get('tool_calls_count', 0)} tool call(s) in response metadata")
         
         return action_response
 

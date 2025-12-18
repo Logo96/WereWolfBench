@@ -247,8 +247,8 @@ async def run_full_game(args: argparse.Namespace):
             print("   Or use: export GOOGLE_API_KEY='your-key-here'\n")
         
         # Model assignments based on --model argument
-        FLASH_MODEL = "gemini/gemini-2.0-flash"
-        FLASHLITE_MODEL = "gemini/gemini-2.0-flash-lite"
+        FLASH_MODEL = "gemini/gemini-2.5-flash"
+        FLASHLITE_MODEL = "gemini/gemini-2.5-flash-lite"  # Changed to 2.5-flash for function calling support
         
         # Determine model assignment based on --model argument
         if args.model == "flashonly":
@@ -256,10 +256,10 @@ async def run_full_game(args: argparse.Namespace):
             model_description = "All agents: Gemini 2.0 Flash"
         elif args.model == "flashlite":
             model_assignment = [FLASHLITE_MODEL] * 9
-            model_description = "All agents: Gemini 2.0 Flash Lite"
+            model_description = "All agents: Gemini 2.5 Flash"
         elif args.model == "mixed":
             model_assignment = [FLASH_MODEL] * 4 + [FLASHLITE_MODEL] * 5
-            model_description = "Agents 1-4: Gemini 2.0 Flash, Agents 5-9: Gemini 2.0 Flash Lite"
+            model_description = "Agents 1-4: Gemini 2.0 Flash, Agents 5-9: Gemini 2.5 Flash"
         else:
             # Default: use LLM_MODEL env var or fallback to Gemini 2.5 Flash
             default_model = os.getenv("LLM_MODEL", "gemini/gemini-2.5-flash")
@@ -490,7 +490,7 @@ def main():
         type=str,
         choices=["flashonly", "flashlite", "mixed"],
         default=None,
-        help="Model assignment: 'flashonly' (all use gemini-2.0-flash), 'flashlite' (all use gemini-2.0-flash-lite), 'mixed' (agents 1-4 use flash, 5-9 use flashlite). If not specified, uses LLM_MODEL env var or defaults to gemini-2.5-flash."
+        help="Model assignment: 'flashonly' (all use gemini-2.0-flash), 'flashlite' (all use gemini-2.5-flash), 'mixed' (agents 1-4 use flash, 5-9 use gemini-2.5-flash). If not specified, uses LLM_MODEL env var or defaults to gemini-2.5-flash."
     )
     
     args = parser.parse_args()

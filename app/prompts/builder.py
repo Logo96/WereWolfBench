@@ -6,18 +6,50 @@ This module constructs role-appropriate prompts for White Agents based on:
 - Agent's assigned role
 - Public vs private information (information hiding)
 - Sequential discussion context
-- Full game history from PublicGameMemory
+
+Game history is accessed via tool calls (get_game_memory) rather than embedded in prompts.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, Optional
 from app.types.agent import AgentRole, AgentProfile
 from app.types.game import GameState, GamePhase
 
-if TYPE_CHECKING:
-    from app.memory.public_memory import PublicGameMemory
-
 logger = logging.getLogger(__name__)
+
+
+# Tool instructions to replace embedded memory
+MEMORY_TOOL_INSTRUCTIONS = """GAME MEMORY ACCESS:
+You have access to a tool called "get_game_memory" to retrieve game history.
+
+Use this tool when you need to:
+- Review past discussions and accusations from previous rounds
+- Check voting patterns and who voted for whom
+- See who was eliminated and when
+- Analyze player behavior patterns over time
+
+Call the tool to get this information before making important decisions.
+If this is the first round, there may be no history yet."""
+
+# Mandatory tool instructions for day discussion phase
+MEMORY_TOOL_MANDATORY_INSTRUCTIONS = """GAME MEMORY ACCESS (MANDATORY):
+You MUST use the "get_game_memory" tool to retrieve game history BEFORE making your decision.
+
+CRITICAL REQUIREMENT: You MUST call the get_game_memory tool first. Do NOT respond with your action until you have retrieved the game history using this tool.
+
+The tool will provide you with:
+- All past discussions and accusations from previous rounds
+- Complete voting patterns showing who voted for whom
+- Elimination history showing who was eliminated and when
+- Player behavior patterns over time
+
+This information is essential for making informed decisions. You cannot make strategic choices without reviewing the game history first.
+
+STEP 1: Call get_game_memory tool
+STEP 2: Review the returned game history
+STEP 3: Then formulate your response based on the history
+
+If this is the first round, the tool will return "No game history yet" - that's fine, but you still must call it."""
 
 
 class PromptBuilder:
@@ -42,6 +74,8 @@ Eliminated: {eliminated_agents}
 
 CURRENT ROUND DISCUSSION:
 {discussion_context}
+
+MANDATORY: Before formulating your response, you MUST call the get_game_memory tool to retrieve the complete game history. This is required to make informed decisions based on past discussions, voting patterns, and eliminations.
 
 STRATEGY GUIDELINES:
 - Analyze voting patterns and discussion history to identify suspicious behavior
@@ -94,7 +128,7 @@ CRITICAL: If you mention an agent in CONTENT for a target-required subaction, yo
 IMPORTANT: claim_role vs reveal_identity
 - claim_role: You can claim ANY role (seer, doctor, werewolf, etc.) even if it's FALSE - use this to deceive
 - reveal_identity: You can ONLY reveal your ACTUAL role - this is always TRUE information
-- Example: If you're a villager, you could use claim_role to pretend you're the seer, but you cannot use reveal_identity unless you're actually the seer""",
+- Example: If you're a villager, you could use claim_role to pretend you're the seer, but you cannot use reveal_identity unless you're actually the seer.""",
         GamePhase.DAY_VOTING: """ROUND {round} - VOTING PHASE
 
 IDENTITY: {agent_id} ({role})
@@ -388,19 +422,20 @@ STRATEGY:
         agent: AgentProfile,
         discussion_context: List[Dict[str, Any]] = None,
         storage=None,
-        is_last_words: bool = False,
-        public_memory: Optional['PublicGameMemory'] = None
+        is_last_words: bool = False
     ) -> str:
         """
         Build a complete prompt for an agent based on game state and role.
+        
+        Game history is NOT embedded in the prompt. The White Agent can access
+        game history via the get_game_memory tool call.
         
         Args:
             game_state: Current game state
             agent: Agent profile to build prompt for
             discussion_context: Previous discussion messages in current round
-            storage: GameLogger for accessing action history
+            storage: GameLogger for accessing action history (unused, kept for compatibility)
             is_last_words: Whether this is a last words prompt
-            public_memory: PublicGameMemory instance for full game history
             
         Returns:
             Complete formatted prompt string
@@ -414,9 +449,9 @@ STRATEGY:
             logger.warning(f"No template for phase {phase}, using fallback")
             return PromptBuilder._build_fallback_prompt(game_state, agent)
         
-        # Build template variables
+        # Build template variables (no memory embedded - use tool instead)
         variables = PromptBuilder._build_template_variables(
-            game_state, agent, discussion_context, storage, public_memory
+            game_state, agent, discussion_context
         )
         
         # Format the template
@@ -432,9 +467,7 @@ STRATEGY:
     def _build_template_variables(
         game_state: GameState,
         agent: AgentProfile,
-        discussion_context: List[Dict[str, Any]] = None,
-        storage=None,
-        public_memory: Optional['PublicGameMemory'] = None
+        discussion_context: List[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Build all template variables for prompt formatting."""
         role = agent.role
@@ -483,11 +516,13 @@ STRATEGY:
         valid_targets = PromptBuilder._get_valid_targets(game_state, agent)
         variables["valid_targets"] = ", ".join(valid_targets) or "none"
         
-        # Public information (visible to all players)
-        # Use memory system if available, otherwise fall back to storage-based history
-        variables["public_info"] = PromptBuilder._build_public_info(
-            game_state, agent_id, storage, public_memory
-        )
+        # Public information - now uses tool instructions instead of embedded memory
+        # White Agent accesses game history via get_game_memory tool call
+        # For DAY_DISCUSSION phase, tool use is MANDATORY
+        if game_state.phase == GamePhase.DAY_DISCUSSION:
+            variables["public_info"] = MEMORY_TOOL_MANDATORY_INSTRUCTIONS
+        else:
+            variables["public_info"] = MEMORY_TOOL_INSTRUCTIONS
         
         # Private information (role-specific)
         variables["private_info"] = PromptBuilder._build_private_info(game_state, agent)
@@ -572,93 +607,6 @@ STRATEGY:
                 valid = [game_state.killed_this_night]
                 
         return valid
-    
-    @staticmethod
-    def _build_public_info(
-        game_state: GameState,
-        agent_id: str,
-        storage=None,
-        public_memory: Optional['PublicGameMemory'] = None
-    ) -> str:
-        """
-        Build public information section visible to all players.
-        
-        Uses PublicGameMemory if available for full game history,
-        otherwise falls back to storage-based limited history.
-        """
-        # Use memory system if available (provides full history)
-        if public_memory:
-            return PromptBuilder._build_public_info_from_memory(game_state, public_memory)
-        
-        # Fallback to storage-based limited history
-        return PromptBuilder._build_public_info_from_storage(game_state, agent_id, storage)
-    
-    @staticmethod
-    def _build_public_info_from_memory(
-        game_state: GameState,
-        public_memory: 'PublicGameMemory'
-    ) -> str:
-        """Build public info from PublicGameMemory (full game history)."""
-        lines = ["GAME HISTORY"]
-        
-        # Basic game info
-        lines.append(f"Round {game_state.round_number} | Phase: {game_state.phase.value}")
-        lines.append(f"Alive: {len(game_state.alive_agent_ids)} | Eliminated: {len(game_state.eliminated_agent_ids)}")
-        
-        # Get memory summary (includes all discussions, votes, eliminations)
-        memory_summary = public_memory.get_compact_summary()
-        if memory_summary and memory_summary != "No game history yet.":
-            lines.append(memory_summary)
-        else:
-            lines.append("(No previous game events recorded)")
-        
-        return "\n".join(lines)
-    
-    @staticmethod
-    def _build_public_info_from_storage(
-        game_state: GameState,
-        agent_id: str,
-        storage=None
-    ) -> str:
-        """Build public info from storage (limited history - fallback)."""
-        lines = ["GAME HISTORY (LIMITED):"]
-        
-        # Previous round summaries
-        if game_state.round_number > 1:
-            lines.append(f"Round {game_state.round_number}")
-            lines.append(f"Eliminated: {len(game_state.eliminated_agent_ids)} players")
-        
-        # Discussion history from storage (public actions only)
-        if storage:
-            all_actions = storage.get_game_actions(game_state.game_id)
-            
-            # Get discussion actions
-            discussions = [
-                a for a in all_actions
-                if a.action_type.value == "discuss"
-            ]
-            if discussions:
-                lines.append("\nRecent discussions:")
-                for action in discussions[-5:]:  # Last 5 discussions
-                    content = action.discussion_content or action.reasoning
-                    lines.append(f"  {action.agent_id}: \"{content}\"")
-            
-            # Get voting results from previous rounds
-            votes = [
-                a for a in all_actions
-                if a.action_type.value == "vote"
-            ]
-            if votes:
-                lines.append("\nPrevious votes:")
-                vote_summary = {}
-                for action in votes[-10:]:
-                    voter = action.agent_id
-                    target = action.target_agent_id
-                    vote_summary[voter] = target
-                for voter, target in vote_summary.items():
-                    lines.append(f"  {voter} -> {target}")
-        
-        return "\n".join(lines) if len(lines) > 1 else ""
     
     @staticmethod
     def _get_role_specific_subactions(role: AgentRole) -> str:

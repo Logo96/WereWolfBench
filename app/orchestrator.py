@@ -555,15 +555,14 @@ class GameOrchestrator:
     ) -> Optional[WerewolfAction]:
         """Request an action from a white agent via A2A SDK with enhanced prompt."""
         
-        # Build the prompt using PromptBuilder
-        public_memory = self.public_memories.get(game_id)
+        # Build the prompt using PromptBuilder (memory is NOT embedded in prompt)
+        # White Agent accesses memory via get_game_memory tool call
         prompt = PromptBuilder.build_prompt(
             game_state=game_state,
             agent=agent,
             discussion_context=discussion_context,
             storage=self.storage,
-            is_last_words=is_last_words,
-            public_memory=public_memory
+            is_last_words=is_last_words
         )
         
         # Add decision maker context for werewolves
@@ -586,11 +585,16 @@ class GameOrchestrator:
             logger.error(f"No A2A client found for agent {agent.agent_id}")
             return None
 
+        # Get serialized memory data for tool access
+        public_memory = self.public_memories.get(game_id)
+        memory_data = public_memory.to_dict() if public_memory else None
+
         # Build task data with prompt
         task_data = {
             "task": "werewolf_action",
             "game_id": game_id,
-            "prompt": prompt,  # Full constructed prompt
+            "prompt": prompt,  # Full constructed prompt (without embedded memory)
+            "memory_data": memory_data,  # Serialized memory for tool access
             "game_state": visible_state,
             "your_role": agent.role.value,
             "your_agent_id": agent.agent_id,  # Pass agent_id so White Agent can include it in response
@@ -730,6 +734,22 @@ class GameOrchestrator:
                             raw_response=part_text,
                             parsed_action=action.model_dump()
                         )
+                        
+                        # Log tool calls if present (Deep Debug)
+                        if action.metadata and action.metadata.get("tool_calls"):
+                            tool_call_info = action.metadata["tool_calls"]
+                            self.storage._write_game_event(game_id, {
+                                "event": "DEBUG_tool_calls",
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "game_id": game_id,
+                                "agent_id": agent.agent_id,
+                                "phase": game_state.phase.value,
+                                "round_number": game_state.round_number,
+                                "tool_calls_count": tool_call_info.get("tool_calls_count", 0),
+                                "total_iterations": tool_call_info.get("total_iterations", 0),
+                                "tool_calls": tool_call_info.get("tool_calls", [])
+                            })
+                            logger.info(f"🔧 Agent {agent.agent_id} made {tool_call_info.get('tool_calls_count', 0)} tool call(s)")
                         
                         self._process_action(game_id, action)
                         return action
