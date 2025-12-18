@@ -1,5 +1,8 @@
 """White Agent - A2A Server for Werewolf Players using LiteLLM"""
 
+import sys
+print("[1] Starting white_agent/main.py imports", file=sys.stderr, flush=True)
+
 import os
 import logging
 import json
@@ -7,21 +10,44 @@ import tomllib
 import time
 from typing import Optional, Dict, Any
 from pathlib import Path
+print("[2] stdlib imports done", file=sys.stderr, flush=True)
 
 import uvicorn
-from dotenv import load_dotenv
+print("[3] uvicorn imported", file=sys.stderr, flush=True)
 
+from dotenv import load_dotenv
+print("[4] dotenv imported", file=sys.stderr, flush=True)
+
+print("[5] about to import a2a.server.apps", file=sys.stderr, flush=True)
 from a2a.server.apps import A2AStarletteApplication
+print("[6] A2AStarletteApplication imported", file=sys.stderr, flush=True)
+
 from a2a.server.request_handlers import DefaultRequestHandler
+print("[7] DefaultRequestHandler imported", file=sys.stderr, flush=True)
+
 from a2a.server.tasks import InMemoryTaskStore
+print("[8] InMemoryTaskStore imported", file=sys.stderr, flush=True)
+
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+print("[9] AgentExecutor imported", file=sys.stderr, flush=True)
+
 from a2a.server.events import EventQueue
+print("[10] EventQueue imported", file=sys.stderr, flush=True)
+
 from a2a.types import AgentCard
+print("[11] AgentCard imported", file=sys.stderr, flush=True)
+
 from a2a.utils import new_agent_text_message
+print("[12] new_agent_text_message imported", file=sys.stderr, flush=True)
 
 from white_agent.llm_handler import LLMHandler
+print("[13] LLMHandler imported", file=sys.stderr, flush=True)
+
 from white_agent.prompt_parser import PromptParser
+print("[14] PromptParser imported", file=sys.stderr, flush=True)
+
 from white_agent.response_formatter import ResponseFormatter
+print("[15] All imports complete!", file=sys.stderr, flush=True)
 
 load_dotenv()
 

@@ -14,14 +14,19 @@ RUN chmod +x white_run.sh
 # AgentBeats looks for run.sh by default, so create a symlink or copy
 RUN cp white_run.sh run.sh && chmod +x run.sh
 
+# Copy white_agent_card.toml to agent_card.toml (controller expects this name)
+RUN cp white_agent_card.toml agent_card.toml
+
 # Set environment variables
-ENV PORT=9002
+ENV PORT=8080
 ENV HOST=0.0.0.0
 ENV ENVIRONMENT=production
+# Controller needs to know the public hostname for agent URLs
+ENV CLOUDRUN_HOST=werewolf-white-0-1047600885700.us-central1.run.app
 # BASE_URL will be overridden by AGENT_URL if set by AgentBeats
-ENV BASE_URL=http://localhost:9002
+ENV BASE_URL=https://werewolf-white-0-1047600885700.us-central1.run.app
 
-EXPOSE 9002
+EXPOSE 8080
 
 # Run via AgentBeats controller which handles /status and /agents
 # The controller will call white_run.sh which starts white_main.py

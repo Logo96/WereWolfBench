@@ -34,28 +34,40 @@ docker push ${IMAGE_NAME}
 echo ""
 echo "[4/5] Deploying ${NUM_INSTANCES} instances to Cloud Run..."
 
-# Base port for white agents (matching run_full_game.py)
-BASE_PORT=9002
+# Cloud Run uses port 8080 by default
+PORT=8080
+
+# Check for GEMINI_API_KEY
+if [ -z "$GEMINI_API_KEY" ]; then
+    echo "WARNING: GEMINI_API_KEY not set. White agents won't be able to call LLM."
+    echo "Set it with: export GEMINI_API_KEY=your-key"
+fi
+
+# Get the project number for constructing the URL
+PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format='value(projectNumber)')
 
 for i in $(seq 0 $((NUM_INSTANCES - 1))); do
-    PORT=$((BASE_PORT + i))
     SERVICE_NAME="${SERVICE_NAME_PREFIX}-${i}"
-    
+
+    # Construct the CLOUDRUN_HOST using the predictable URL pattern
+    # Format: {service}-{project_number}.{region}.run.app
+    CLOUDRUN_HOST="${SERVICE_NAME}-${PROJECT_NUMBER}.${REGION}.run.app"
+
     echo ""
-    echo "Deploying instance ${i} (port ${PORT})..."
-    
-    # Generate unique service URL pattern (Cloud Run will assign actual URL)
-    # Note: The actual URL will be different, but BASE_URL is just a fallback
+    echo "Deploying instance ${i}..."
+    echo "  CLOUDRUN_HOST=${CLOUDRUN_HOST}"
+
+    # Deploy with all env vars in one step
     gcloud run deploy ${SERVICE_NAME} \
       --image ${IMAGE_NAME} \
       --platform managed \
       --region ${REGION} \
       --allow-unauthenticated \
       --port ${PORT} \
-      --set-env-vars "ENVIRONMENT=production,PORT=${PORT}"
-    
-    SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --platform managed --region ${REGION} --format 'value(status.url)')
-    
+      --memory 1Gi \
+      --set-env-vars "ENVIRONMENT=production,CLOUDRUN_HOST=${CLOUDRUN_HOST},GEMINI_API_KEY=${GEMINI_API_KEY}"
+
+    SERVICE_URL="https://${CLOUDRUN_HOST}"
     echo "  ✓ Instance ${i} deployed: ${SERVICE_URL}"
 done
 
