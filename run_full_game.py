@@ -416,25 +416,7 @@ async def run_full_game(args: argparse.Namespace):
                             metrics_name = args.name if args.name else game_id
                             metrics_file = save_metrics(metrics_name, metrics, args.metrics_dir)
                             
-                            # Print summary
-                            print("\n" + "=" * 70)
-                            print("Metrics Summary")
-                            print("=" * 70)
-                            print(f"Winner: {metrics.get('winner', 'N/A')}")
-                            print(f"Total Rounds: {metrics.get('total_rounds', 'N/A')}")
-                            print(f"Final Alive: {len(metrics.get('final_alive', []))}")
-                            print(f"Final Eliminated: {len(metrics.get('final_eliminated', []))}")
-                            print(f"\nAction Counts:")
-                            for action_type, count in metrics.get('action_counts', {}).items():
-                                print(f"  {action_type}: {count}")
-                            print(f"\nDiscussion Actions: {metrics.get('discussion_actions_count', 0)}")
-                            print(f"Investigation Actions: {metrics.get('investigation_actions_count', 0)}")
-                            print(f"\nRule Compliance: {metrics.get('rule_compliance_percentage', 0):.1f}%")
-                            print(f"  Valid Actions: {metrics.get('valid_actions', 0)}/{metrics.get('total_actions', 0)}")
-                            
-                            # Show White Agent logs if not already shown
-                            # Note: We skip reading output here since processes are still running
-                            # Output will be lost, but prevents blocking. Use --show-agent-output for real-time logs.
+                        
                             if not args.show_agent_output:
                                 print("\n" + "=" * 70)
                                 print("White Agent Logs")
