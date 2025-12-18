@@ -294,8 +294,8 @@ class RulesValidator:
         if werewolf_count == 0:
             return True, "villagers"
 
-        # Check if max rounds reached
-        if game_state.round_number >= game_state.config.max_rounds:
-            return True, "villagers" if villager_count > werewolf_count else "werewolves"
+        # Check if max rounds reached - game ends but no winner declared (only if max_rounds is set)
+        if game_state.config.max_rounds is not None and game_state.round_number >= game_state.config.max_rounds:
+            return True, None  # No winner when max rounds reached
 
         return False, None

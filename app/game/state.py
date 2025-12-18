@@ -39,17 +39,28 @@ class StateManager:
 
     @staticmethod
     def get_next_phase(current_phase: GamePhase, config: Dict) -> GamePhase:
-        """Determine the next game phase"""
+        """
+        Determine the next game phase.
+        
+        Night phase order is critical for correct Werewolf rules:
+        1. NIGHT_WEREWOLF - Werewolves choose their target
+        2. NIGHT_DOCTOR - Doctor protects (resolves if werewolf kill succeeds)
+        3. NIGHT_WITCH - Witch sees the ACTUAL victim (after doctor protection applied)
+        4. NIGHT_SEER - Seer investigates
+        
+        This order ensures the Witch sees the correct victim information.
+        """
         phase_order = [
             GamePhase.NIGHT_WEREWOLF,
         ]
 
+        # Doctor MUST come before Witch so protection is applied before Witch sees victim
+        if config.get("has_doctor", True):
+            phase_order.append(GamePhase.NIGHT_DOCTOR)
         if config.get("has_witch", False):
             phase_order.append(GamePhase.NIGHT_WITCH)
         if config.get("has_seer", True):
             phase_order.append(GamePhase.NIGHT_SEER)
-        if config.get("has_doctor", True):
-            phase_order.append(GamePhase.NIGHT_DOCTOR)
         
         # Day phases come after all night phases
         phase_order.extend([
@@ -216,16 +227,22 @@ class StateManager:
         # Clear current votes
         game_state.current_votes.clear()
 
+        # Store current phase to detect round completion
+        current_phase = game_state.phase
+
         # Move to next phase
         game_state.phase = StateManager.get_next_phase(
             game_state.phase,
             game_state.config.model_dump()
         )
 
-        # Increment round number if returning to day
-        if game_state.phase == GamePhase.DAY_DISCUSSION:
+        # Increment round number after completing a full round (after DAY_VOTING -> NIGHT_WEREWOLF)
+        # This ensures we play the full number of rounds before checking max_rounds
+        if current_phase == GamePhase.DAY_VOTING and game_state.phase == GamePhase.NIGHT_WEREWOLF:
             game_state.round_number += 1
-            # Clear night-specific state
+        
+        # Clear night-specific state when transitioning to day phases
+        if game_state.phase == GamePhase.DAY_DISCUSSION:
             game_state.killed_this_night = None
             game_state.hunter_eliminated = None
 
@@ -251,23 +268,62 @@ class StateManager:
     ) -> None:
         """
         Process discussion sub-actions and track reveals for metrics.
+        Now supports multiple subactions per speech.
         """
-        if action.action_type != ActionType.DISCUSS or not action.discussion_action_type:
+        if action.action_type != ActionType.DISCUSS:
             return
         
-        # Track reveals for metrics
-        if action.discussion_action_type == DiscussionActionType.REVEAL_IDENTITY:
-            StateManager._track_identity_reveal(game_state, action)
-        elif action.discussion_action_type == DiscussionActionType.REVEAL_INVESTIGATION:
-            StateManager._track_investigation_reveal(game_state, action)
-        elif action.discussion_action_type == DiscussionActionType.REVEAL_HEALED_KILLED:
-            StateManager._track_heal_kill_reveal(game_state, action)
-        elif action.discussion_action_type == DiscussionActionType.REVEAL_PROTECTED:
-            StateManager._track_protection_reveal(game_state, action)
-        elif action.discussion_action_type == DiscussionActionType.ACCUSE:
-            StateManager._track_accusation(game_state, action)
-        elif action.discussion_action_type == DiscussionActionType.REVEAL_WEREWOLF:
-            StateManager._track_werewolf_reveal(game_state, action)
+        # Get list of subactions (supporting both old single-value and new list format)
+        subactions = action.get_discussion_subactions()
+        targets = action.get_discussion_targets()  # Now returns List[List[str]]
+        
+        if not subactions:
+            return
+        
+        # Process each subaction (can have multiple targets per subaction)
+        for i, subaction_type in enumerate(subactions):
+            target_list = targets[i] if i < len(targets) else []
+            # Process each target for this subaction
+            for target in target_list:
+                # Create a temporary action with single subaction for tracking
+                temp_action = WerewolfAction(
+                    agent_id=action.agent_id,
+                    action_type=action.action_type,
+                    target_agent_id=target,
+                    reasoning=action.reasoning,
+                    confidence=action.confidence,
+                    discussion_action_type=subaction_type,
+                    discussion_content=action.discussion_content,
+                    revealed_information=action.revealed_information,
+                    claimed_role=action.claimed_role
+                )
+                
+                # Track reveals for metrics
+                if subaction_type == DiscussionActionType.REVEAL_IDENTITY:
+                    StateManager._track_identity_reveal(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.REVEAL_INVESTIGATION:
+                    StateManager._track_investigation_reveal(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.REVEAL_HEALED_KILLED:
+                    StateManager._track_heal_kill_reveal(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.REVEAL_PROTECTED:
+                    StateManager._track_protection_reveal(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.ACCUSE:
+                    StateManager._track_accusation(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.DEFEND:
+                    StateManager._track_defense(game_state, temp_action)
+                elif subaction_type == DiscussionActionType.REVEAL_WEREWOLF:
+                    StateManager._track_werewolf_reveal(game_state, temp_action)
+            
+            # Track last words once per subaction (not per target)
+            if subaction_type == DiscussionActionType.LAST_WORDS:
+                if "last_words" not in game_state.metadata:
+                    game_state.metadata["last_words"] = []
+                game_state.metadata["last_words"].append({
+                    "agent_id": action.agent_id,
+                    "round": game_state.round_number,
+                    "timestamp": action.timestamp,
+                    "content": action.discussion_content
+                })
 
     @staticmethod
     def _track_identity_reveal(game_state: GameState, action: WerewolfAction) -> None:

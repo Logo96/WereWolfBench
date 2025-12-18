@@ -1,4 +1,7 @@
-"""Storage system with both in-memory and file persistence for game data"""
+"""Storage system with both in-memory and file persistence for game data.
+
+Enhanced with deep debug logging for White Agent decision tracking.
+"""
 
 import json
 import logging
@@ -23,16 +26,43 @@ def _serialize_metadata_list(metadata_list: List[Dict]) -> List[Dict]:
         serialized.append(serialized_item)
     return serialized
 
+
+def _serialize_for_json(obj: Any) -> Any:
+    """Recursively serialize objects for JSON."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: _serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_serialize_for_json(item) for item in obj]
+    elif hasattr(obj, 'value'):  # Enum
+        return obj.value
+    else:
+        return obj
+
 logger = logging.getLogger(__name__)
 
 
 class GameLogger:
     """Handles game data storage with both in-memory cache and file persistence."""
 
-    def __init__(self, log_dir: str = "game_logs"):
-        """Initialize the game logger."""
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True)
+    def __init__(self, log_dir: str = "game_logs", subfolder: str = "baseline", game_name: str = None):
+        """
+        Initialize the game logger.
+        
+        Args:
+            log_dir: Base directory for logs (default: "game_logs")
+            subfolder: Subfolder to use ("baseline" or "optimized", default: "baseline")
+            game_name: Custom name for log files (if None, uses game_id)
+        """
+        self.log_dir = Path(log_dir) / subfolder
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get custom game name from environment variable if not provided
+        if game_name is None:
+            import os
+            game_name = os.getenv("GAME_NAME", "")
+        self.game_name = game_name if game_name else None
 
         self.active_games: Dict[str, GameState] = {}
         self.game_agents: Dict[str, List[AgentProfile]] = {}
@@ -84,7 +114,8 @@ class GameLogger:
                     "id": agent.agent_id,
                     "name": agent.name,
                     "url": str(agent.agent_url),
-                    "role": agent.role.value if agent.role else None
+                    "role": agent.role.value if agent.role else None,
+                    "model": agent.model  # LLM model used by this agent
                 }
                 for agent in agents
             ]
@@ -118,8 +149,14 @@ class GameLogger:
         }
         
         # Add discussion sub-action information
-        if action.action_type.value == "discuss" and action.discussion_action_type:
-            event_data["discussion_action_type"] = action.discussion_action_type.value
+        if action.action_type.value == "discuss":
+            # Support new format with multiple subactions and targets
+            if action.discussion_subactions:
+                event_data["discussion_subactions"] = [s.value for s in action.discussion_subactions]
+                event_data["discussion_targets"] = action.discussion_targets  # List[List[str]]
+            # Backward compatibility: single subaction
+            elif action.discussion_action_type:
+                event_data["discussion_action_type"] = action.discussion_action_type.value
             event_data["discussion_content"] = action.discussion_content
             if action.claimed_role:
                 event_data["claimed_role"] = action.claimed_role
@@ -346,17 +383,21 @@ class GameLogger:
 
     def _write_game_event(self, game_id: str, event: Dict[str, Any]) -> None:
         """Write an event to the game's log file."""
-        log_file = self.log_dir / f"game_{game_id}.jsonl"
+        # Use custom name if set, otherwise use game_id
+        file_name = self.game_name if self.game_name else game_id
+        log_file = self.log_dir / f"game_{file_name}.jsonl"
 
         try:
-            with open(log_file, "a") as f:
-                f.write(json.dumps(event) + "\n")
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.error(f"Failed to write event to log file: {e}")
 
     def load_game_from_log(self, game_id: str) -> Optional[Dict[str, Any]]:
         """Load a game's history from its log file."""
-        log_file = self.log_dir / f"game_{game_id}.jsonl"
+        # Use custom name if set, otherwise use game_id
+        file_name = self.game_name if self.game_name else game_id
+        log_file = self.log_dir / f"game_{file_name}.jsonl"
 
         if not log_file.exists():
             return None
@@ -372,3 +413,203 @@ class GameLogger:
             return None
 
         return {"game_id": game_id, "events": events}
+
+    # =========================================================================
+    # DEEP DEBUG LOGGING - Track exact prompts and responses for White Agents
+    # =========================================================================
+
+    def log_agent_prompt(
+        self,
+        game_id: str,
+        agent_id: str,
+        phase: str,
+        round_number: int,
+        prompt: str
+    ) -> None:
+        """
+        Log the exact prompt sent to a White Agent.
+        
+        This enables full visibility into what context each agent receives.
+        """
+        self._write_game_event(game_id, {
+            "event": "DEBUG_agent_prompt",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "phase": phase,
+            "round_number": round_number,
+            "prompt": prompt,
+            "prompt_length": len(prompt)
+        })
+        
+        logger.debug(f"Logged prompt for {agent_id} in {phase} (round {round_number})")
+
+    def log_agent_response(
+        self,
+        game_id: str,
+        agent_id: str,
+        phase: str,
+        round_number: int,
+        raw_response: str,
+        response_time_ms: float = None
+    ) -> None:
+        """
+        Log the raw response received from a White Agent.
+        
+        This captures exactly what the LLM returned before any parsing.
+        """
+        self._write_game_event(game_id, {
+            "event": "DEBUG_agent_response",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "phase": phase,
+            "round_number": round_number,
+            "raw_response": raw_response,
+            "response_length": len(raw_response),
+            "response_time_ms": response_time_ms
+        })
+        
+        logger.debug(f"Logged response from {agent_id} ({response_time_ms:.2f}ms)")
+
+    def log_agent_action_detail(
+        self,
+        game_id: str,
+        agent_id: str,
+        prompt: str,
+        raw_response: str,
+        parsed_action: Dict[str, Any]
+    ) -> None:
+        """
+        Log complete prompt->response->action cycle for an agent.
+        
+        This is the comprehensive debug log that shows:
+        1. What prompt was sent
+        2. What raw response was received
+        3. How it was parsed into an action
+        """
+        # Serialize the action for JSON
+        serialized_action = _serialize_for_json(parsed_action)
+        
+        self._write_game_event(game_id, {
+            "event": "DEBUG_agent_action_detail",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "input_prompt": prompt,
+            "raw_output": raw_response,
+            "parsed_action": serialized_action,
+            "prompt_tokens_estimate": len(prompt.split()),
+            "response_tokens_estimate": len(raw_response.split())
+        })
+
+    def log_agent_error(
+        self,
+        game_id: str,
+        agent_id: str,
+        error_type: str,
+        error_message: str,
+        raw_response: str = None
+    ) -> None:
+        """
+        Log errors that occur during agent communication or response parsing.
+        """
+        self._write_game_event(game_id, {
+            "event": "DEBUG_agent_error",
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_id": game_id,
+            "agent_id": agent_id,
+            "error_type": error_type,
+            "error_message": error_message,
+            "raw_response": raw_response
+        })
+        
+        logger.warning(f"Agent error logged: {agent_id} - {error_type}: {error_message}")
+
+    def get_agent_prompts(self, game_id: str, agent_id: str = None) -> List[Dict[str, Any]]:
+        """
+        Get all prompts sent to agents in a game.
+        
+        Args:
+            game_id: Game ID
+            agent_id: Optional filter for specific agent
+            
+        Returns:
+            List of prompt events
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        prompts = [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "DEBUG_agent_prompt"
+        ]
+        
+        if agent_id:
+            prompts = [p for p in prompts if p.get("agent_id") == agent_id]
+        
+        return prompts
+
+    def get_agent_responses(self, game_id: str, agent_id: str = None) -> List[Dict[str, Any]]:
+        """
+        Get all responses from agents in a game.
+        
+        Args:
+            game_id: Game ID
+            agent_id: Optional filter for specific agent
+            
+        Returns:
+            List of response events
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        responses = [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "DEBUG_agent_response"
+        ]
+        
+        if agent_id:
+            responses = [r for r in responses if r.get("agent_id") == agent_id]
+        
+        return responses
+
+    def get_agent_errors(self, game_id: str) -> List[Dict[str, Any]]:
+        """Get all agent errors in a game."""
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        return [
+            event for event in game_log.get("events", [])
+            if event.get("event") == "DEBUG_agent_error"
+        ]
+
+    def get_decision_trace(self, game_id: str, agent_id: str, round_number: int = None) -> List[Dict[str, Any]]:
+        """
+        Get the complete decision trace for an agent.
+        
+        Returns prompt->response->action sequences for debugging.
+        """
+        game_log = self.load_game_from_log(game_id)
+        if not game_log:
+            return []
+        
+        events = game_log.get("events", [])
+        
+        # Filter for this agent's detailed action events
+        traces = [
+            event for event in events
+            if event.get("event") == "DEBUG_agent_action_detail"
+            and event.get("agent_id") == agent_id
+        ]
+        
+        if round_number:
+            traces = [
+                t for t in traces
+                if t.get("parsed_action", {}).get("metadata", {}).get("round_number") == round_number
+            ]
+        
+        return traces

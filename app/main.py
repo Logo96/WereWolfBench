@@ -94,23 +94,24 @@ class WerewolfGreenAgentExecutor(AgentExecutor):
 
             # Send response
             response_message = new_agent_text_message(json.dumps(result))
-            event_queue.enqueue_event(response_message)
+            await event_queue.enqueue_event(response_message)
 
         except Exception as e:
             logger.error(f"Error executing task: {e}", exc_info=True)
             error_message = new_agent_text_message(json.dumps({"error": str(e)}))
-            event_queue.enqueue_event(error_message)
+            await event_queue.enqueue_event(error_message)
 
     async def _handle_start_game(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Handle start_game task."""
         agent_urls = params.get("agent_urls", [])
         config = params.get("config")
+        agent_models = params.get("agent_models")  # Optional mapping of url -> model
 
         if len(agent_urls) < 4:
             raise ValueError("Minimum 4 agents required")
 
         game_config = GameConfig(**config) if config else None
-        game_id = await orchestrator.start_game(agent_urls, game_config)
+        game_id = await orchestrator.start_game(agent_urls, game_config, agent_models)
 
         return {
             "game_id": game_id,

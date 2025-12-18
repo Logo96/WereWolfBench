@@ -12,3 +12,23 @@ ENV/
 htmlcov/
 *.log
 .DS_Store
+
+# Game logs - ignore all files in game_logs/ folder
+game_logs/*
+docs/*
+# But allow README or other documentation files if needed
+!game_logs/README.md
+# Allow baseline and optimized subfolders to exist (but ignore their contents)
+!game_logs/baseline/
+!game_logs/optimized/
+game_logs/baseline/*
+game_logs/optimized/*
+
+# Metrics - ignore all files in metrics/ folder
+metrics/*
+# But allow baseline and optimized subfolders to exist
+!metrics/baseline/
+!metrics/optimized/
+metrics/baseline/*
+metrics/optimized/*
+!game_logs/.gitkeep

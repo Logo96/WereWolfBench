@@ -1,0 +1,17 @@
+name = "Werewolf White Agent"
+description = "Participates in Werewolf game using LLM reasoning. Receives game prompts from the Green Agent and returns strategic actions based on role and game state."
+version = "0.1.0"
+
+defaultInputModes = ["text"]
+defaultOutputModes = ["text"]
+
+[capabilities]
+streaming = false
+
+[[skills]]
+id = "werewolf_action"
+name = "Take Werewolf Game Action"
+description = "Respond to game prompts from the Green Agent with strategic actions"
+tags = ["white agent", "werewolf", "game", "player", "llm"]
+examples = ["Take action based on game state", "Vote for elimination", "Discuss suspicions"]
+

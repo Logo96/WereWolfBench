@@ -170,6 +170,16 @@ class GameEngine:
             self.state_manager.process_seer_investigation(game_state, seer_actions)
             if seer_actions:
                 logger.info(f"Seer investigations processed: {len(seer_actions)} investigations")
+        
+        # Finalize night eliminations when transitioning to day phase
+        # This handles variable night phase order (depends on which roles are enabled)
+        next_phase = self.state_manager.get_next_phase(game_state.phase, game_state.config.model_dump())
+        if next_phase == GamePhase.DAY_DISCUSSION:
+            # Night is over - finalize any pending night kills
+            if game_state.killed_this_night and game_state.killed_this_night in game_state.alive_agent_ids:
+                self.state_manager.eliminate_agent(game_state, game_state.killed_this_night)
+                eliminated.append(game_state.killed_this_night)
+                logger.info(f"Agent {game_state.killed_this_night} eliminated after night (not healed/protected)")
 
         elif game_state.phase == GamePhase.NIGHT_DOCTOR:
             doctor_actions = [
@@ -179,6 +189,11 @@ class GameEngine:
             protected_agent = self._get_doctor_protection(doctor_actions)
             if protected_agent:
                 logger.info(f"Agent {protected_agent} protected by doctor")
+                # If doctor protected the killed agent, they survive
+                # This happens BEFORE witch phase, so witch sees correct victim
+                if game_state.killed_this_night == protected_agent:
+                    game_state.killed_this_night = None
+            # NOTE: Night eliminations are finalized in NIGHT_SEER phase (last night phase)
 
         # Process hunter elimination (happens after any elimination)
         if eliminated and game_state.hunter_eliminated:
@@ -198,10 +213,8 @@ class GameEngine:
         )
         game_state.round_history.append(round_record)
 
-        # Advance to next phase
-        self.state_manager.advance_round(game_state)
-
-        # Check for game end
+        # Check for game end BEFORE advancing (especially important for max_rounds check)
+        # This ensures we check after completing DAY_VOTING, not after starting the next round
         game_ended, winner = self.rules_validator.check_game_end_condition(game_state)
         if game_ended:
             game_state.status = GameStatus.COMPLETED
@@ -209,6 +222,10 @@ class GameEngine:
             game_state.winner = winner
             game_state.completed_at = datetime.utcnow()
             logger.info(f"Game {game_state.game_id} ended. Winner: {winner}")
+            return game_state, eliminated
+
+        # Advance to next phase (only if game hasn't ended)
+        self.state_manager.advance_round(game_state)
 
         return game_state, eliminated
 
