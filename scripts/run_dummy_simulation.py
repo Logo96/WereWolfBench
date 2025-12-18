@@ -43,7 +43,8 @@ async def _send_jsonrpc(
         "params": {"message": message},
     }
 
-    response = await client.post(url, json=payload, timeout=30)
+    # High timeout for LLM calls - can take several minutes with network latency
+    response = await client.post(url, json=payload, timeout=300.0)  # 5 minutes
     response.raise_for_status()
     data = response.json()
 
@@ -137,7 +138,7 @@ async def run_simulation(args: argparse.Namespace) -> None:
                     print(f"Winner: {status_result.get('winner')}")
                     log_path = args.log_dir or "game_logs"
                     print(
-                        f"Check logs under {log_path}/game_{game_id}.jsonl for full history."
+                        f"Check logs under {log_path}/baseline/game_{game_id}.jsonl for full history."
                     )
                 else:
                     await asyncio.sleep(args.poll_interval)
