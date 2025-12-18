@@ -623,6 +623,62 @@ def calculate_system_metrics(
                 invalid_actions_by_agent[agent_id] += 1
                 total_actions_by_agent[agent_id] += 1
     
+    # Track tool calls
+    tool_calls_by_agent = defaultdict(int)
+    tool_calls_by_phase = defaultdict(lambda: defaultdict(int))  # agent_id -> phase -> count
+    tool_usage_verified_by_agent = defaultdict(lambda: {"total": 0, "verified": 0})
+    tool_iterations_by_agent = defaultdict(list)  # Track iterations per tool call
+    
+    for event in events:
+        if event.get("event") == "DEBUG_tool_calls":
+            agent_id = event.get("agent_id")
+            phase = event.get("phase", "unknown")
+            tool_calls = event.get("tool_calls", [])
+            
+            if agent_id:
+                # Only count get_game_memory tool calls (not all tool calls)
+                memory_tool_calls = [
+                    tc for tc in tool_calls 
+                    if isinstance(tc, dict) and tc.get("tool_name") == "get_game_memory"
+                ]
+                memory_tool_calls_count = len(memory_tool_calls)
+                
+                if memory_tool_calls_count > 0:
+                    tool_calls_by_agent[agent_id] += memory_tool_calls_count
+                    tool_calls_by_phase[agent_id][phase] += memory_tool_calls_count
+                    
+                    # Track iterations only if memory tool was called
+                    total_iterations = event.get("total_iterations", 0)
+                    if total_iterations > 0:
+                        tool_iterations_by_agent[agent_id].append(total_iterations)
+                
+                # Check tool usage verification from metadata in action events
+                # We'll check this separately by looking at action metadata
+    
+    # Check tool usage verification from action metadata
+    # Tool usage verification is stored in DEBUG_agent_action_detail events
+    for event in events:
+        if event.get("event") == "DEBUG_agent_action_detail":
+            agent_id = event.get("agent_id")
+            raw_output = event.get("raw_output", "")
+            if agent_id and raw_output:
+                try:
+                    response_data = json.loads(raw_output)
+                    action_metadata = response_data.get("action", {}).get("metadata", {})
+                    tool_calls_info = action_metadata.get("tool_calls")
+                    if tool_calls_info:
+                        tool_usage_verified_by_agent[agent_id]["total"] += 1
+                        # Check if tool_usage_verified is in the tool_calls dict
+                        if tool_calls_info.get("tool_usage_verified", False):
+                            tool_usage_verified_by_agent[agent_id]["verified"] += 1
+                        # Also check in individual tool calls
+                        elif tool_calls_info.get("tool_calls"):
+                            tool_calls_list = tool_calls_info.get("tool_calls", [])
+                            if tool_calls_list and tool_calls_list[-1].get("tool_usage_verified", False):
+                                tool_usage_verified_by_agent[agent_id]["verified"] += 1
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass
+    
     # Calculate per-agent metrics
     for agent_id in agent_metrics:
         # Response time metrics
@@ -642,6 +698,37 @@ def calculate_system_metrics(
         agent_metrics[agent_id]["invalid_action_rate"] = (
             (invalid_actions / total_actions * 100) if total_actions > 0 else 0
         )
+        
+        # Tool call metrics
+        total_tool_calls = tool_calls_by_agent.get(agent_id, 0)
+        agent_metrics[agent_id]["total_tool_calls"] = total_tool_calls
+        
+        # Tool calls per phase
+        phase_tool_calls = tool_calls_by_phase.get(agent_id, {})
+        agent_metrics[agent_id]["tool_calls_by_phase"] = dict(phase_tool_calls)
+        
+        # Average tool calls per action
+        agent_metrics[agent_id]["avg_tool_calls_per_action"] = (
+            (total_tool_calls / total_actions) if total_actions > 0 else 0
+        )
+        
+        # Average iterations per tool call
+        iterations_list = tool_iterations_by_agent.get(agent_id, [])
+        if iterations_list:
+            agent_metrics[agent_id]["avg_tool_iterations"] = statistics.mean(iterations_list)
+            agent_metrics[agent_id]["max_tool_iterations"] = max(iterations_list)
+        else:
+            agent_metrics[agent_id]["avg_tool_iterations"] = None
+            agent_metrics[agent_id]["max_tool_iterations"] = None
+        
+        # Tool usage verification rate
+        verified_data = tool_usage_verified_by_agent.get(agent_id, {"total": 0, "verified": 0})
+        if verified_data["total"] > 0:
+            agent_metrics[agent_id]["tool_usage_verification_rate"] = (
+                (verified_data["verified"] / verified_data["total"]) * 100
+            )
+        else:
+            agent_metrics[agent_id]["tool_usage_verification_rate"] = None
 
 
 def calculate_model_aggregated_metrics(
@@ -718,6 +805,33 @@ def calculate_model_aggregated_metrics(
                 model_metrics["avg_p95_response_time_ms"] = statistics.mean(p95_times)
             if invalid_rates:
                 model_metrics["avg_invalid_action_rate"] = statistics.mean(invalid_rates)
+            
+            # Tool call metrics
+            tool_call_counts = [m.get("total_tool_calls", 0) for m in general_metrics if m.get("total_tool_calls") is not None]
+            if tool_call_counts:
+                model_metrics["avg_total_tool_calls"] = statistics.mean(tool_call_counts)
+                model_metrics["total_tool_calls"] = sum(tool_call_counts)
+            else:
+                model_metrics["avg_total_tool_calls"] = None
+                model_metrics["total_tool_calls"] = 0
+            
+            avg_tool_calls_per_action = [m.get("avg_tool_calls_per_action", 0) for m in general_metrics if m.get("avg_tool_calls_per_action") is not None]
+            if avg_tool_calls_per_action:
+                model_metrics["avg_tool_calls_per_action"] = statistics.mean(avg_tool_calls_per_action)
+            else:
+                model_metrics["avg_tool_calls_per_action"] = None
+            
+            avg_iterations = [m.get("avg_tool_iterations", 0) for m in general_metrics if m.get("avg_tool_iterations") is not None]
+            if avg_iterations:
+                model_metrics["avg_tool_iterations"] = statistics.mean(avg_iterations)
+            else:
+                model_metrics["avg_tool_iterations"] = None
+            
+            verification_rates = [m.get("tool_usage_verification_rate", 0) for m in general_metrics if m.get("tool_usage_verification_rate") is not None]
+            if verification_rates:
+                model_metrics["avg_tool_usage_verification_rate"] = statistics.mean(verification_rates)
+            else:
+                model_metrics["avg_tool_usage_verification_rate"] = None
         
         # Aggregate role-specific metrics (separated by role)
         role_specific = {}

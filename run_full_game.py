@@ -186,13 +186,16 @@ async def send_jsonrpc(
     return json.loads(text_parts[0])
 
 
-def save_metrics(game_id: str, metrics: dict, output_dir: str = "metrics", subfolder: str = "baseline"):
+def save_metrics(game_id: str, metrics: dict, output_dir: str = "metrics", subfolder: str = ""):
     """Save game metrics to a JSON file.
     
     Note: This function saves metrics with the format {game_id}_metrics.json
     to match the format used by extract_game_metrics.py (which removes 'game_' prefix from log filenames).
     """
-    output_path = Path(output_dir) / subfolder
+    if subfolder:
+        output_path = Path(output_dir) / subfolder
+    else:
+        output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Remove 'game_' prefix if present to match extract_game_metrics.py format
@@ -249,7 +252,8 @@ async def run_full_game(args: argparse.Namespace):
         # Model assignments based on --model argument
         FLASH_MODEL = "gemini/gemini-2.5-flash"
         FLASHLITE_MODEL = "gemini/gemini-2.5-flash-lite"  # Changed to 2.5-flash for function calling support
-        
+        # FLASH_MODEL = "gemini/gemini-2.0-flash"
+        # FLASHLITE_MODEL = "gemini/gemini-2.0-flash-lite"
         # Determine model assignment based on --model argument
         if args.model == "flashonly":
             model_assignment = [FLASH_MODEL] * 9
@@ -404,7 +408,7 @@ async def run_full_game(args: argparse.Namespace):
                     
                     # Use custom name if provided, otherwise use game_id
                     log_name = args.name if args.name else game_id
-                    log_file = Path(f"game_logs/baseline/game_{log_name}.jsonl")
+                    log_file = Path(f"game_logs/game_{log_name}.jsonl")
                     if log_file.exists():
                         print(f"📋 Game log: {log_file}")
                         
@@ -477,7 +481,7 @@ def main():
         "--metrics-dir",
         type=str,
         default="metrics",
-        help="Base directory to save metrics JSON files (default: metrics, saves to metrics/baseline/)"
+        help="Directory to save metrics JSON files (default: metrics)"
     )
     parser.add_argument(
         "--name",

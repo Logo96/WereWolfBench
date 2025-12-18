@@ -46,16 +46,19 @@ logger = logging.getLogger(__name__)
 class GameLogger:
     """Handles game data storage with both in-memory cache and file persistence."""
 
-    def __init__(self, log_dir: str = "game_logs", subfolder: str = "baseline", game_name: str = None):
+    def __init__(self, log_dir: str = "game_logs", subfolder: str = "", game_name: str = None):
         """
         Initialize the game logger.
         
         Args:
             log_dir: Base directory for logs (default: "game_logs")
-            subfolder: Subfolder to use ("baseline" or "optimized", default: "baseline")
+            subfolder: Subfolder to use (default: "", saves directly to log_dir)
             game_name: Custom name for log files (if None, uses game_id)
         """
-        self.log_dir = Path(log_dir) / subfolder
+        if subfolder:
+            self.log_dir = Path(log_dir) / subfolder
+        else:
+            self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
         # Get custom game name from environment variable if not provided

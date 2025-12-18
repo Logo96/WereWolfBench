@@ -89,8 +89,7 @@ class ResponseFormatter:
         
         # Get reasoning
         reasoning = parsed.get("reasoning", "Strategic decision based on game state.")
-        if len(reasoning) > 200:
-            reasoning = reasoning[:197] + "..."
+        # No truncation - preserve full reasoning for logging
         
         # Build the action payload
         # Get agent_id from game_state if available, otherwise empty (orchestrator will set it)
@@ -162,7 +161,7 @@ class ResponseFormatter:
             parsed["target"] = ResponseFormatter._extract_target_from_text(response)
             
         if "reasoning" not in parsed:
-            parsed["reasoning"] = response[:200] if response else "No reasoning provided."
+            parsed["reasoning"] = response if response else "No reasoning provided."
         
         # Extract discussion content if present
         content_match = re.search(r'CONTENT:\s*(.+?)(?=\n[A-Z]+:|$)', response, re.IGNORECASE | re.DOTALL)
@@ -175,30 +174,102 @@ class ResponseFormatter:
             parsed["discussion_type"] = disc_type_match.group(1).lower()
         
         # Extract multiple discussion subactions
-        subactions_match = re.search(r'DISCUSSION_SUBACTIONS:\s*\[(.*?)\]', response, re.IGNORECASE)
+        subactions_match = re.search(r'DISCUSSION_SUBACTIONS:\s*(\[.*?\])', response, re.IGNORECASE)
         if subactions_match:
             subactions_str = subactions_match.group(1)
-            parsed["discussion_subactions"] = [s.strip().lower() for s in subactions_str.split(',') if s.strip()]
+            try:
+                # Try to parse as JSON first (most reliable)
+                import json
+                parsed_subactions = json.loads(subactions_str)
+                if isinstance(parsed_subactions, list):
+                    # Remove duplicates and clean up
+                    parsed["discussion_subactions"] = [
+                        str(s).strip().lower().strip('"').strip("'") 
+                        for s in parsed_subactions 
+                        if s and str(s).strip()
+                    ]
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_subactions = []
+                    for s in parsed["discussion_subactions"]:
+                        if s not in seen:
+                            seen.add(s)
+                            unique_subactions.append(s)
+                    parsed["discussion_subactions"] = unique_subactions
+                else:
+                    parsed["discussion_subactions"] = []
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to regex parsing if JSON fails
+                subactions_str = subactions_match.group(1).strip('[]')
+                parsed["discussion_subactions"] = [
+                    s.strip().lower().strip('"').strip("'") 
+                    for s in subactions_str.split(',') 
+                    if s.strip()
+                ]
+                # Remove duplicates
+                seen = set()
+                unique_subactions = []
+                for s in parsed["discussion_subactions"]:
+                    if s not in seen:
+                        seen.add(s)
+                        unique_subactions.append(s)
+                parsed["discussion_subactions"] = unique_subactions
         
         # Extract multiple discussion targets (can be list of lists)
-        targets_match = re.search(r'DISCUSSION_TARGETS:\s*\[(.*?)\]', response, re.IGNORECASE | re.DOTALL)
+        # Use a more robust regex that handles nested brackets
+        targets_match = re.search(r'DISCUSSION_TARGETS:\s*(\[.*?\])', response, re.IGNORECASE | re.DOTALL)
         if targets_match:
             targets_str = targets_match.group(1)
-            # Try to parse as nested lists: [[agent1, agent2], [agent3]]
-            # First try to match nested brackets
-            nested_match = re.findall(r'\[([^\]]*)\]', targets_str)
-            if nested_match:
-                # Found nested lists
-                parsed["discussion_targets"] = [
-                    [t.strip() for t in group.split(',') if t.strip() and t.strip().lower() not in ['none', 'n/a', '-', '']]
-                    for group in nested_match
-                ]
-            else:
-                # Fallback: single list format
-                parsed["discussion_targets"] = [
-                    [t.strip()] if t.strip() and t.strip().lower() not in ['none', 'n/a', '-', ''] else []
-                    for t in targets_str.split(',')
-                ]
+            try:
+                # Try to parse as JSON first (most reliable)
+                import json
+                parsed_targets = json.loads(targets_str)
+                if isinstance(parsed_targets, list):
+                    # Ensure it's a list of lists
+                    formatted_targets = []
+                    for item in parsed_targets:
+                        if isinstance(item, list):
+                            # Filter out invalid values
+                            formatted_targets.append([
+                                str(t).strip() for t in item 
+                                if t and str(t).strip().lower() not in ['none', 'n/a', '-', '']
+                            ])
+                        elif item and str(item).strip().lower() not in ['none', 'n/a', '-', '']:
+                            # Single item - wrap in list
+                            formatted_targets.append([str(item).strip()])
+                        else:
+                            formatted_targets.append([])
+                    parsed["discussion_targets"] = formatted_targets
+                else:
+                    parsed["discussion_targets"] = []
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to regex parsing if JSON fails
+                # Try to match nested brackets more carefully
+                nested_match = re.findall(r'\[([^\]]*)\]', targets_str)
+                if nested_match:
+                    # Found nested lists
+                    formatted_targets = []
+                    for group in nested_match:
+                        # Clean up the group - remove quotes and whitespace
+                        cleaned_group = group.strip().strip('"').strip("'")
+                        if cleaned_group:
+                            # Split by comma and clean each item
+                            items = [t.strip().strip('"').strip("'") for t in cleaned_group.split(',') if t.strip()]
+                            formatted_targets.append([
+                                t for t in items 
+                                if t.lower() not in ['none', 'n/a', '-', '']
+                            ])
+                        else:
+                            formatted_targets.append([])
+                    parsed["discussion_targets"] = formatted_targets
+                else:
+                    # Fallback: single list format
+                    parsed["discussion_targets"] = [
+                        [t.strip().strip('"').strip("'")] 
+                        if t.strip() and t.strip().lower() not in ['none', 'n/a', '-', ''] 
+                        else []
+                        for t in targets_str.split(',')
+                    ]
             
         return parsed
     
@@ -441,6 +512,11 @@ class ResponseFormatter:
             discussion_targets.append([])
         discussion_targets = discussion_targets[:len(canonical_types)]
         
+        # CRITICAL: general_discussion should NEVER have targets - remove any targets assigned to it
+        for i, subaction_type in enumerate(canonical_types):
+            if subaction_type == "general_discussion":
+                discussion_targets[i] = []
+        
         # Extract targets from content if missing and we have target-required actions
         # This is a fallback - the prompt should make it clear targets are required
         target_required_subactions = [
@@ -467,7 +543,7 @@ class ResponseFormatter:
         
         # Get discussion content
         content = parsed.get("discussion_content") or parsed.get("reasoning", "")
-        fields["discussion_content"] = content[:300]  # Limit for cost savings
+        fields["discussion_content"] = content  # No truncation - preserve full content for logging
         
         # Add claimed role if claiming
         if "claim_role" in canonical_types:
