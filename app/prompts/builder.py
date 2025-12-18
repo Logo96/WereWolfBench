@@ -28,28 +28,54 @@ Use this tool when you need to:
 - See who was eliminated and when
 - Analyze player behavior patterns over time
 
-Call the tool to get this information before making important decisions.
-If this is the first round, there may be no history yet."""
+HOW TO USE THE TOOL:
+1. Request the get_game_memory tool call
+2. The system executes it and returns the game history to you
+3. You review the results in your conversation context
+4. You then provide your final response using that information
+
+IMPORTANT: After calling the tool and receiving results, you MUST still provide your complete action response (ACTION, TARGET, REASONING, etc.). The tool call is for gathering information, not for completing the action.
+
+If this is the first round, there may be no history yet, but you should still provide your response."""
 
 # Mandatory tool instructions for day discussion phase
 MEMORY_TOOL_MANDATORY_INSTRUCTIONS = """GAME MEMORY ACCESS (MANDATORY):
 You MUST use the "get_game_memory" tool to retrieve game history BEFORE making your decision.
 
-CRITICAL REQUIREMENT: You MUST call the get_game_memory tool first. Do NOT respond with your action until you have retrieved the game history using this tool.
+═══════════════════════════════════════════════════════════════════════
+HOW TOOL CALLING WORKS (READ CAREFULLY):
+═══════════════════════════════════════════════════════════════════════
 
-The tool will provide you with:
-- All past discussions and accusations from previous rounds
-- Complete voting patterns showing who voted for whom
-- Elimination history showing who was eliminated and when
-- Player behavior patterns over time
+STEP 1: REQUEST TOOL CALL
+   - You indicate you want to call the get_game_memory tool
+   - Example: You can say "I need to review game history first" and request the tool
 
-This information is essential for making informed decisions. You cannot make strategic choices without reviewing the game history first.
+STEP 2: SYSTEM EXECUTES TOOL
+   - The system automatically executes the tool for you
+   - The game history is retrieved from memory
 
-STEP 1: Call get_game_memory tool
-STEP 2: Review the returned game history
-STEP 3: Then formulate your response based on the history
+STEP 3: TOOL RESULTS ARE RETURNED TO YOU
+   - The system sends you the complete game history
+   - This includes: past discussions, voting patterns, eliminations, behavior patterns
+   - You will see all this information in your conversation context
 
-If this is the first round, the tool will return "No game history yet" - that's fine, but you still must call it."""
+STEP 4: YOU PROVIDE YOUR FINAL RESPONSE (THIS IS REQUIRED!)
+   - After reviewing the tool results, you MUST provide your complete action
+   - Include: ACTION, DISCUSSION_SUBACTIONS, DISCUSSION_TARGETS, CONTENT, REASONING
+   - Your response should reference the memory data (e.g., "Based on round 1 voting...")
+   - The tool call is NOT your final answer - you must still respond with your action
+
+═══════════════════════════════════════════════════════════════════════
+
+CRITICAL: The tool call alone does NOT complete the task. After the tool returns results to you, you MUST:
+1. Review the game history provided by the tool
+2. Use that information to inform your decision
+3. Provide your complete ACTION response in the required format
+4. Reference specific information from the history in your reasoning
+
+If you only call the tool without providing a final response, your action will be invalid.
+
+"""
 
 
 class PromptBuilder:
@@ -90,7 +116,7 @@ STRATEGY GUIDELINES:
 AVAILABLE ACTIONS:
 You can use multiple discussion subactions in one response.
 
-Universal subactions:
+Available subactions:
 - general_discussion: General discussion, sharing opinions, or strategizing (no target)
 - accuse: Accuse agent of being werewolf (REQUIRES TARGET: agent_id)
 - defend: Defend yourself or another agent against accusations (REQUIRES TARGET: agent_id)
@@ -128,7 +154,18 @@ CRITICAL: If you mention an agent in CONTENT for a target-required subaction, yo
 IMPORTANT: claim_role vs reveal_identity
 - claim_role: You can claim ANY role (seer, doctor, werewolf, etc.) even if it's FALSE - use this to deceive
 - reveal_identity: You can ONLY reveal your ACTUAL role - this is always TRUE information
-- Example: If you're a villager, you could use claim_role to pretend you're the seer, but you cannot use reveal_identity unless you're actually the seer.""",
+- Example: If you're a villager, you could use claim_role to pretend you're the seer, but you cannot use reveal_identity unless you're actually the seer.
+
+REMINDER ABOUT TOOL CALLS:
+1. Call get_game_memory tool (you will automatically receive the results)
+2. AFTER receiving the tool results, you MUST provide your complete ACTION response
+3. The tool call is NOT your final answer - you must still provide:
+   - ACTION: discuss
+   - DISCUSSION_SUBACTIONS: [...]
+   - DISCUSSION_TARGETS: [...]
+   - CONTENT: [your message]
+   - REASONING: [your reasoning]
+4. Do NOT skip providing your ACTION response after calling the tool!""",
         GamePhase.DAY_VOTING: """ROUND {round} - VOTING PHASE
 
 IDENTITY: {agent_id} ({role})

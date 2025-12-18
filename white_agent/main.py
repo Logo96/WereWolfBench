@@ -143,11 +143,11 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         
         # Log tool call information
         if tool_call_info:
-            logger.info(f"🔧 Tool calls made: {tool_call_info.get('tool_calls_count', 0)} call(s)")
+            logger.info(f"Tool calls made: {tool_call_info.get('tool_calls_count', 0)} call(s)")
             for tc in tool_call_info.get('tool_calls', []):
                 logger.info(f"   - {tc['tool_name']}: {tc['tool_args']}")
         else:
-            logger.info(f"🔧 No tool calls made by LLM")
+            logger.info(f"No tool calls made by LLM")
         
         # Store raw LLM text BEFORE formatting (for logging)
         raw_llm_text = llm_response
@@ -161,7 +161,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
                 api_key_name = "GEMINI_API_KEY or GOOGLE_API_KEY"
             else:
                 api_key_name = "OPENAI_API_KEY"
-            logger.warning(f"⚠️  FALLBACK response used (LLM unavailable) - response time: {response_time:.2f}ms")
+            logger.warning(f"WARNING: FALLBACK response used (LLM unavailable) - response time: {response_time:.2f}ms")
             logger.warning(f"   Check: 1) LiteLLM installed? 2) {api_key_name} set? 3) Model name valid?")
             logger.warning(f"   Fallback response: {llm_response[:300]}...")
         else:
