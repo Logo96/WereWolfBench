@@ -39,17 +39,28 @@ class StateManager:
 
     @staticmethod
     def get_next_phase(current_phase: GamePhase, config: Dict) -> GamePhase:
-        """Determine the next game phase"""
+        """
+        Determine the next game phase.
+        
+        Night phase order is critical for correct Werewolf rules:
+        1. NIGHT_WEREWOLF - Werewolves choose their target
+        2. NIGHT_DOCTOR - Doctor protects (resolves if werewolf kill succeeds)
+        3. NIGHT_WITCH - Witch sees the ACTUAL victim (after doctor protection applied)
+        4. NIGHT_SEER - Seer investigates
+        
+        This order ensures the Witch sees the correct victim information.
+        """
         phase_order = [
             GamePhase.NIGHT_WEREWOLF,
         ]
 
+        # Doctor MUST come before Witch so protection is applied before Witch sees victim
+        if config.get("has_doctor", True):
+            phase_order.append(GamePhase.NIGHT_DOCTOR)
         if config.get("has_witch", False):
             phase_order.append(GamePhase.NIGHT_WITCH)
         if config.get("has_seer", True):
             phase_order.append(GamePhase.NIGHT_SEER)
-        if config.get("has_doctor", True):
-            phase_order.append(GamePhase.NIGHT_DOCTOR)
         
         # Day phases come after all night phases
         phase_order.extend([

@@ -25,6 +25,7 @@ from app.types.game import GameState, GamePhase, GameConfig, GameStatus
 from app.game.engine import GameEngine
 from app.logging.storage import GameLogger
 from app.prompts.builder import PromptBuilder
+from app.memory.public_memory import PublicGameMemory
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,9 @@ class GameOrchestrator:
         
         # Track which agent is werewolf decision maker per game
         self.werewolf_decision_makers: Dict[str, str] = {}
+        
+        # Public memory for each game (shared across all agents)
+        self.public_memories: Dict[str, PublicGameMemory] = {}
 
     async def start_game(
         self,
@@ -119,6 +123,13 @@ class GameOrchestrator:
         if werewolves:
             self.werewolf_decision_makers[game_state.game_id] = random.choice(werewolves)
             logger.info(f"Werewolf decision maker: {self.werewolf_decision_makers[game_state.game_id]}")
+        
+        # Initialize public memory for this game
+        self.public_memories[game_state.game_id] = PublicGameMemory(game_state.game_id)
+        self.public_memories[game_state.game_id].update_alive_agents(
+            game_state.round_number, game_state.alive_agent_ids
+        )
+        logger.info(f"Initialized public memory for game {game_state.game_id}")
 
         self.storage.log_game_created(game_state, agent_urls)
         self.storage.save_agents(game_state.game_id, agents)
@@ -155,7 +166,38 @@ class GameOrchestrator:
 
                 if self.engine.should_advance_phase(game_state, phase_actions):
                     old_phase = game_state.phase
+                    
+                    # Update public memory before phase change
+                    public_memory = self.public_memories.get(game_id)
+                    if public_memory:
+                        public_memory.end_phase()
+                    
                     game_state, eliminated = self.engine.advance_phase(game_state, phase_actions)
+                    
+                    # Update public memory after phase change
+                    if public_memory:
+                        # Start new phase
+                        public_memory.start_phase(
+                            game_state.round_number,
+                            game_state.phase.value,
+                            game_state.alive_agent_ids
+                        )
+                        
+                        # Record eliminations in public memory
+                        for agent_id in eliminated:
+                            method = self._determine_elimination_method(old_phase, game_state, agent_id)
+                            public_memory.add_elimination(
+                                agent_id=agent_id,
+                                round_number=game_state.round_number,
+                                method=method,
+                                phase=old_phase.value
+                            )
+                        
+                        # Update alive agents
+                        public_memory.update_alive_agents(
+                            game_state.round_number,
+                            game_state.alive_agent_ids
+                        )
 
                     logger.info(
                         f"Game {game_id}: {old_phase.value} -> {game_state.phase.value}"
@@ -514,12 +556,14 @@ class GameOrchestrator:
         """Request an action from a white agent via A2A SDK with enhanced prompt."""
         
         # Build the prompt using PromptBuilder
+        public_memory = self.public_memories.get(game_id)
         prompt = PromptBuilder.build_prompt(
             game_state=game_state,
             agent=agent,
             discussion_context=discussion_context,
             storage=self.storage,
-            is_last_words=is_last_words
+            is_last_words=is_last_words,
+            public_memory=public_memory
         )
         
         # Add decision maker context for werewolves
@@ -798,6 +842,9 @@ class GameOrchestrator:
             self.storage.save_action(game_id, action, game_state.round_number)
             self.storage.save_game(game_state)
             logger.debug(f"Processed action from {action.agent_id}: {action.action_type}")
+            
+            # Update public memory with public actions
+            self._update_public_memory_with_action(game_id, action, game_state)
         else:
             logger.warning(f"Invalid action from {action.agent_id}: {error_msg}")
             # Log invalid actions to the game log for analysis
@@ -890,6 +937,70 @@ class GameOrchestrator:
             if (datetime.utcnow() - a.timestamp).total_seconds() < 300
         ]
         return recent_actions
+    
+    def _determine_elimination_method(
+        self,
+        phase: GamePhase,
+        game_state: GameState,
+        agent_id: str
+    ) -> str:
+        """Determine how an agent was eliminated based on the phase."""
+        if phase == GamePhase.DAY_VOTING:
+            return "vote"
+        elif phase == GamePhase.NIGHT_WEREWOLF:
+            return "werewolf_kill"
+        elif phase == GamePhase.NIGHT_WITCH:
+            return "witch_poison"
+        elif phase == GamePhase.HUNTER_SHOOT:
+            return "hunter_shot"
+        elif phase in [GamePhase.NIGHT_DOCTOR, GamePhase.NIGHT_SEER]:
+            # These phases don't directly cause eliminations, but the night kill
+            # is finalized when transitioning to day
+            return "werewolf_kill"
+        else:
+            return "unknown"
+    
+    def _update_public_memory_with_action(
+        self,
+        game_id: str,
+        action: WerewolfAction,
+        game_state: GameState
+    ) -> None:
+        """Update public memory with a successfully processed action."""
+        public_memory = self.public_memories.get(game_id)
+        if not public_memory:
+            return
+        
+        # Only public actions should be recorded in public memory
+        if action.action_type == ActionType.DISCUSS:
+            # Get subactions and targets
+            subactions = action.get_discussion_subactions()
+            targets = action.get_discussion_targets()
+            
+            # Flatten targets for simple storage
+            all_targets = []
+            for target_list in targets:
+                all_targets.extend(target_list)
+            
+            public_memory.add_discussion(
+                agent_id=action.agent_id,
+                content=action.discussion_content or action.reasoning,
+                round_number=game_state.round_number,
+                discussion_type=subactions[0].value if subactions else "general",
+                targets=all_targets,
+                subactions=[s.value for s in subactions] if subactions else None
+            )
+        
+        elif action.action_type == ActionType.VOTE:
+            if action.target_agent_id:
+                public_memory.add_vote(
+                    voter_id=action.agent_id,
+                    target_id=action.target_agent_id,
+                    round_number=game_state.round_number
+                )
+        
+        # Note: Night actions (KILL, INVESTIGATE, PROTECT, HEAL, POISON) are NOT recorded
+        # in public memory as they are private information
 
     async def _finalize_game(self, game_id: str):
         """Finalize game and clean up resources."""
@@ -948,6 +1059,10 @@ class GameOrchestrator:
         # Clean up werewolf decision maker
         if game_id in self.werewolf_decision_makers:
             del self.werewolf_decision_makers[game_id]
+        
+        # Clean up public memory
+        if game_id in self.public_memories:
+            del self.public_memories[game_id]
 
         # Clean up agent clients
         for agent_id in list(self.agent_clients.keys()):

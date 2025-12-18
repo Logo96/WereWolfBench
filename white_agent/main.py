@@ -22,6 +22,7 @@ from a2a.utils import new_agent_text_message
 from white_agent.llm_handler import LLMHandler
 from white_agent.prompt_parser import PromptParser
 from white_agent.response_formatter import ResponseFormatter
+from white_agent.memory import AgentPrivateMemory, PrivateMemoryManager
 
 load_dotenv()
 
@@ -45,6 +46,12 @@ def init_globals():
 
 class WerewolfWhiteAgentExecutor(AgentExecutor):
     """Executor for Werewolf White Agent - receives prompts and returns actions."""
+    
+    def __init__(self):
+        """Initialize the executor with private memory storage."""
+        super().__init__()
+        # Private memory managers keyed by game_id
+        self._memory_managers: Dict[str, PrivateMemoryManager] = {}
 
     async def execute(
         self,
@@ -105,7 +112,7 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         global llm_handler
         
         # Extract data from task
-        game_id = task_data.get("game_id")
+        game_id = task_data.get("game_id", "")
         game_state = task_data.get("game_state", {})
         your_role = task_data.get("your_role")
         your_agent_id = task_data.get("your_agent_id", "")  # Get agent_id from task_data
@@ -118,6 +125,10 @@ class WerewolfWhiteAgentExecutor(AgentExecutor):
         # Add agent_id to game_state so ResponseFormatter can use it
         if your_agent_id:
             game_state["your_agent_id"] = your_agent_id
+        
+        # Initialize/update private memory for this agent
+        private_memory = self._get_or_create_memory(game_id, your_agent_id, your_role)
+        self._update_private_memory_from_state(private_memory, game_state, your_role)
         
         # Log input for debugging
         logger.info(f"Received task for game {game_id}, phase {phase}, role {your_role}")
@@ -183,6 +194,56 @@ Current phase: {phase}
 Alive players: {', '.join(alive_agents)}
 
 What action do you take? Respond briefly with your action and reasoning."""
+    
+    def _get_or_create_memory(
+        self,
+        game_id: str,
+        agent_id: str,
+        role: str
+    ) -> Optional[AgentPrivateMemory]:
+        """Get or create private memory for an agent in a game."""
+        if not game_id or not agent_id or not role:
+            return None
+        
+        if game_id not in self._memory_managers:
+            self._memory_managers[game_id] = PrivateMemoryManager(game_id)
+        
+        return self._memory_managers[game_id].get_or_create(agent_id, role)
+    
+    def _update_private_memory_from_state(
+        self,
+        memory: Optional[AgentPrivateMemory],
+        game_state: Dict[str, Any],
+        role: str
+    ) -> None:
+        """Update private memory with information from game state."""
+        if not memory:
+            return
+        
+        # Update role-specific information
+        if role == "werewolf":
+            # Update werewolf teammates
+            teammates = game_state.get("werewolf_teammates", [])
+            if teammates:
+                memory.set_werewolf_teammates(teammates)
+        
+        elif role == "seer":
+            # Update investigation results
+            results = game_state.get("investigation_results", [])
+            for result in results:
+                if not memory.has_investigated(result.get("target_id", "")):
+                    memory.add_investigation_result(
+                        target_id=result.get("target_id", ""),
+                        is_werewolf=result.get("is_werewolf", False),
+                        round_num=result.get("round", 1)
+                    )
+        
+        elif role == "witch":
+            # Update potion status
+            memory.update_potion_status(
+                heal_used=not game_state.get("heal_available", True),
+                poison_used=not game_state.get("poison_available", True)
+            )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Cancel a running task."""

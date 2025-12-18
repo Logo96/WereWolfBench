@@ -6,12 +6,16 @@ This module constructs role-appropriate prompts for White Agents based on:
 - Agent's assigned role
 - Public vs private information (information hiding)
 - Sequential discussion context
+- Full game history from PublicGameMemory
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from app.types.agent import AgentRole, AgentProfile
 from app.types.game import GameState, GamePhase
+
+if TYPE_CHECKING:
+    from app.memory.public_memory import PublicGameMemory
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +398,8 @@ WHAT YOU KNOW:
         agent: AgentProfile,
         discussion_context: List[Dict[str, Any]] = None,
         storage=None,
-        is_last_words: bool = False
+        is_last_words: bool = False,
+        public_memory: Optional['PublicGameMemory'] = None
     ) -> str:
         """
         Build a complete prompt for an agent based on game state and role.
@@ -404,6 +409,8 @@ WHAT YOU KNOW:
             agent: Agent profile to build prompt for
             discussion_context: Previous discussion messages in current round
             storage: GameLogger for accessing action history
+            is_last_words: Whether this is a last words prompt
+            public_memory: PublicGameMemory instance for full game history
             
         Returns:
             Complete formatted prompt string
@@ -419,7 +426,7 @@ WHAT YOU KNOW:
         
         # Build template variables
         variables = PromptBuilder._build_template_variables(
-            game_state, agent, discussion_context, storage
+            game_state, agent, discussion_context, storage, public_memory
         )
         
         # Format the template
@@ -436,7 +443,8 @@ WHAT YOU KNOW:
         game_state: GameState,
         agent: AgentProfile,
         discussion_context: List[Dict[str, Any]] = None,
-        storage=None
+        storage=None,
+        public_memory: Optional['PublicGameMemory'] = None
     ) -> Dict[str, Any]:
         """Build all template variables for prompt formatting."""
         role = agent.role
@@ -486,7 +494,10 @@ WHAT YOU KNOW:
         variables["valid_targets"] = ", ".join(valid_targets) or "none"
         
         # Public information (visible to all players)
-        variables["public_info"] = PromptBuilder._build_public_info(game_state, agent_id, storage)
+        # Use memory system if available, otherwise fall back to storage-based history
+        variables["public_info"] = PromptBuilder._build_public_info(
+            game_state, agent_id, storage, public_memory
+        )
         
         # Private information (role-specific)
         variables["private_info"] = PromptBuilder._build_private_info(game_state, agent)
@@ -573,9 +584,55 @@ WHAT YOU KNOW:
         return valid
     
     @staticmethod
-    def _build_public_info(game_state: GameState, agent_id: str, storage=None) -> str:
-        """Build public information section visible to all players."""
-        lines = ["PUBLIC INFORMATION:"]
+    def _build_public_info(
+        game_state: GameState,
+        agent_id: str,
+        storage=None,
+        public_memory: Optional['PublicGameMemory'] = None
+    ) -> str:
+        """
+        Build public information section visible to all players.
+        
+        Uses PublicGameMemory if available for full game history,
+        otherwise falls back to storage-based limited history.
+        """
+        # Use memory system if available (provides full history)
+        if public_memory:
+            return PromptBuilder._build_public_info_from_memory(game_state, public_memory)
+        
+        # Fallback to storage-based limited history
+        return PromptBuilder._build_public_info_from_storage(game_state, agent_id, storage)
+    
+    @staticmethod
+    def _build_public_info_from_memory(
+        game_state: GameState,
+        public_memory: 'PublicGameMemory'
+    ) -> str:
+        """Build public info from PublicGameMemory (full game history)."""
+        lines = ["═══ FULL GAME HISTORY ═══"]
+        
+        # Basic game info
+        lines.append(f"📍 Round {game_state.round_number} | Phase: {game_state.phase.value}")
+        lines.append(f"👥 Alive: {len(game_state.alive_agent_ids)} | Eliminated: {len(game_state.eliminated_agent_ids)}")
+        
+        # Get memory summary (includes all discussions, votes, eliminations)
+        memory_summary = public_memory.get_compact_summary()
+        if memory_summary and memory_summary != "No game history yet.":
+            lines.append(memory_summary)
+        else:
+            lines.append("\n(No previous game events recorded)")
+        
+        lines.append("═════════════════════════")
+        return "\n".join(lines)
+    
+    @staticmethod
+    def _build_public_info_from_storage(
+        game_state: GameState,
+        agent_id: str,
+        storage=None
+    ) -> str:
+        """Build public info from storage (limited history - fallback)."""
+        lines = ["PUBLIC INFORMATION (LIMITED HISTORY):"]
         
         # Previous round summaries
         if game_state.round_number > 1:
